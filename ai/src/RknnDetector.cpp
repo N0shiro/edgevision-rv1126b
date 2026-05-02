@@ -1,0 +1,634 @@
+#include "RknnDetector.h"
+
+#include "TimeUtils.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <sstream>
+
+#if defined(AICAM_HAS_RKNN) && AICAM_HAS_RKNN
+#include <rknn_api.h>
+#endif
+
+namespace {
+
+struct LetterboxInfo {
+    float scale = 1.0f;
+    int pad_x = 0;
+    int pad_y = 0;
+    int resized_width = 0;
+    int resized_height = 0;
+};
+
+inline uint8_t clampToByte(int value) {
+    if (value < 0) {
+        return 0;
+    }
+    if (value > 255) {
+        return 255;
+    }
+    return static_cast<uint8_t>(value);
+}
+
+std::string trim(const std::string& text) {
+    const size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return "";
+    }
+    const size_t last = text.find_last_not_of(" \t\r\n");
+    return text.substr(first, last - first + 1);
+}
+
+std::vector<std::string> loadLabels(const std::string& path) {
+    std::vector<std::string> labels;
+    if (path.empty()) {
+        return labels;
+    }
+
+    std::ifstream input(path.c_str());
+    if (!input.is_open()) {
+        std::cerr << "标签文件打开失败: " << path << std::endl;
+        return labels;
+    }
+
+    std::string line;
+    while (std::getline(input, line)) {
+        line = trim(line);
+        if (!line.empty()) {
+            labels.push_back(line);
+        }
+    }
+
+    return labels;
+}
+
+void fillLetterboxedRgb(
+    const CapturedFrame& frame,
+    int dst_width,
+    int dst_height,
+    std::vector<uint8_t>& rgb,
+    LetterboxInfo& info
+) {
+    rgb.assign(static_cast<size_t>(dst_width) * dst_height * 3, 114);
+
+    const float scale_x = static_cast<float>(dst_width) / static_cast<float>(frame.width);
+    const float scale_y = static_cast<float>(dst_height) / static_cast<float>(frame.height);
+    info.scale = std::min(scale_x, scale_y);
+    info.resized_width = std::max(1, static_cast<int>(std::round(frame.width * info.scale)));
+    info.resized_height = std::max(1, static_cast<int>(std::round(frame.height * info.scale)));
+    info.pad_x = (dst_width - info.resized_width) / 2;
+    info.pad_y = (dst_height - info.resized_height) / 2;
+
+    const size_t y_plane_size = static_cast<size_t>(frame.width) * frame.height;
+
+    for (int y = 0; y < info.resized_height; ++y) {
+        const int src_y = std::min(
+            frame.height - 1,
+            static_cast<int>(y / info.scale)
+        );
+
+        for (int x = 0; x < info.resized_width; ++x) {
+            const int src_x = std::min(
+                frame.width - 1,
+                static_cast<int>(x / info.scale)
+            );
+
+            const size_t y_index = static_cast<size_t>(src_y) * frame.width + src_x;
+            const size_t uv_index =
+                y_plane_size +
+                static_cast<size_t>(src_y / 2) * frame.width +
+                static_cast<size_t>(src_x & ~1);
+
+            const int y_value = static_cast<int>(frame.nv12[y_index]);
+            const int u_value = static_cast<int>(frame.nv12[uv_index]) - 128;
+            const int v_value = static_cast<int>(frame.nv12[uv_index + 1]) - 128;
+
+            const int c = std::max(0, y_value - 16);
+            const int d = u_value;
+            const int e = v_value;
+
+            const uint8_t r = clampToByte((298 * c + 409 * e + 128) >> 8);
+            const uint8_t g = clampToByte((298 * c - 100 * d - 208 * e + 128) >> 8);
+            const uint8_t b = clampToByte((298 * c + 516 * d + 128) >> 8);
+
+            const int dst_x = info.pad_x + x;
+            const int dst_y = info.pad_y + y;
+            const size_t dst_index =
+                (static_cast<size_t>(dst_y) * dst_width + static_cast<size_t>(dst_x)) * 3;
+
+            rgb[dst_index + 0] = r;
+            rgb[dst_index + 1] = g;
+            rgb[dst_index + 2] = b;
+        }
+    }
+}
+
+float intersectionOverUnion(const ai::Detection& lhs, const ai::Detection& rhs) {
+    const float inter_x1 = std::max(lhs.x1, rhs.x1);
+    const float inter_y1 = std::max(lhs.y1, rhs.y1);
+    const float inter_x2 = std::min(lhs.x2, rhs.x2);
+    const float inter_y2 = std::min(lhs.y2, rhs.y2);
+
+    const float inter_w = std::max(0.0f, inter_x2 - inter_x1);
+    const float inter_h = std::max(0.0f, inter_y2 - inter_y1);
+    const float inter_area = inter_w * inter_h;
+
+    const float lhs_area = std::max(0.0f, lhs.x2 - lhs.x1) * std::max(0.0f, lhs.y2 - lhs.y1);
+    const float rhs_area = std::max(0.0f, rhs.x2 - rhs.x1) * std::max(0.0f, rhs.y2 - rhs.y1);
+    const float union_area = lhs_area + rhs_area - inter_area;
+
+    if (union_area <= 0.0f) {
+        return 0.0f;
+    }
+
+    return inter_area / union_area;
+}
+
+std::vector<ai::Detection> applyNms(
+    std::vector<ai::Detection> detections,
+    float nms_threshold,
+    int max_results
+) {
+    std::sort(
+        detections.begin(),
+        detections.end(),
+        [](const ai::Detection& lhs, const ai::Detection& rhs) {
+            return lhs.score > rhs.score;
+        }
+    );
+
+    std::vector<ai::Detection> kept;
+    for (const auto& candidate : detections) {
+        bool suppressed = false;
+        for (const auto& selected : kept) {
+            if (candidate.class_id == selected.class_id &&
+                intersectionOverUnion(candidate, selected) > nms_threshold) {
+                suppressed = true;
+                break;
+            }
+        }
+
+        if (!suppressed) {
+            kept.push_back(candidate);
+            if (max_results > 0 && static_cast<int>(kept.size()) >= max_results) {
+                break;
+            }
+        }
+    }
+
+    return kept;
+}
+
+bool looksNormalized(float a, float b, float c, float d) {
+    const float max_value = std::max(
+        std::max(std::fabs(a), std::fabs(b)),
+        std::max(std::fabs(c), std::fabs(d))
+    );
+    return max_value <= 2.0f;
+}
+
+bool inferTensorLayout(
+    const std::vector<uint32_t>& dims,
+    int& rows,
+    int& attrs,
+    bool& attr_major
+) {
+    if (dims.size() == 2) {
+        if (dims[1] >= 6) {
+            rows = static_cast<int>(dims[0]);
+            attrs = static_cast<int>(dims[1]);
+            attr_major = false;
+            return true;
+        }
+        if (dims[0] >= 6) {
+            rows = static_cast<int>(dims[1]);
+            attrs = static_cast<int>(dims[0]);
+            attr_major = true;
+            return true;
+        }
+        return false;
+    }
+
+    if (dims.size() == 3) {
+        const uint32_t second_last = dims[dims.size() - 2];
+        const uint32_t last = dims[dims.size() - 1];
+
+        if (last >= 6) {
+            rows = static_cast<int>(second_last);
+            attrs = static_cast<int>(last);
+            attr_major = false;
+            return true;
+        }
+
+        if (second_last >= 6) {
+            rows = static_cast<int>(last);
+            attrs = static_cast<int>(second_last);
+            attr_major = true;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+float readTensorValue(
+    const float* data,
+    int rows,
+    int attrs,
+    bool attr_major,
+    int row,
+    int attr
+) {
+    if (attr_major) {
+        return data[attr * rows + row];
+    }
+    return data[row * attrs + attr];
+}
+
+float clampFloat(float value, float lower, float upper) {
+    return std::max(lower, std::min(value, upper));
+}
+
+}  // namespace
+
+struct RknnDetector::Impl {
+#if defined(AICAM_HAS_RKNN) && AICAM_HAS_RKNN
+    rknn_context context = 0;
+    rknn_input_output_num io_num {};
+    rknn_tensor_attr input_attr {};
+    std::vector<rknn_tensor_attr> output_attrs;
+#endif
+    int input_width = 0;
+    int input_height = 0;
+    int input_channels = 0;
+    std::vector<uint8_t> rgb_input;
+    std::vector<std::string> labels;
+};
+
+RknnDetector::RknnDetector(AiConfig config)
+    : config_(std::move(config)),
+      impl_(new Impl()),
+      initialized_(false) {}
+
+RknnDetector::~RknnDetector() {
+#if defined(AICAM_HAS_RKNN) && AICAM_HAS_RKNN
+    if (impl_ != nullptr && impl_->context != 0) {
+        rknn_destroy(impl_->context);
+        impl_->context = 0;
+    }
+#endif
+}
+
+bool RknnDetector::initialize() {
+    if (!config_.enabled) {
+        disabled_reason_ = "AI disabled by configuration";
+        return false;
+    }
+
+    if (config_.model_path.empty()) {
+        disabled_reason_ = "AICAM_RKNN_MODEL is empty";
+        return false;
+    }
+
+    impl_->labels = loadLabels(config_.labels_path);
+
+#if defined(AICAM_HAS_RKNN) && AICAM_HAS_RKNN
+    const int ret = rknn_init(
+        &impl_->context,
+        const_cast<char*>(config_.model_path.c_str()),
+        0,
+        RKNN_FLAG_PRIOR_MEDIUM,
+        nullptr
+    );
+    if (ret != RKNN_SUCC) {
+        std::ostringstream oss;
+        oss << "rknn_init failed, ret=" << ret;
+        disabled_reason_ = oss.str();
+        return false;
+    }
+
+    if (rknn_query(
+            impl_->context,
+            RKNN_QUERY_IN_OUT_NUM,
+            &impl_->io_num,
+            sizeof(impl_->io_num)) != RKNN_SUCC) {
+        disabled_reason_ = "RKNN_QUERY_IN_OUT_NUM failed";
+        return false;
+    }
+
+    std::memset(&impl_->input_attr, 0, sizeof(impl_->input_attr));
+    impl_->input_attr.index = 0;
+    if (rknn_query(
+            impl_->context,
+            RKNN_QUERY_INPUT_ATTR,
+            &impl_->input_attr,
+            sizeof(impl_->input_attr)) != RKNN_SUCC) {
+        disabled_reason_ = "RKNN_QUERY_INPUT_ATTR failed";
+        return false;
+    }
+
+    impl_->output_attrs.resize(impl_->io_num.n_output);
+    for (uint32_t i = 0; i < impl_->io_num.n_output; ++i) {
+        std::memset(&impl_->output_attrs[i], 0, sizeof(rknn_tensor_attr));
+        impl_->output_attrs[i].index = i;
+        if (rknn_query(
+                impl_->context,
+                RKNN_QUERY_OUTPUT_ATTR,
+                &impl_->output_attrs[i],
+                sizeof(rknn_tensor_attr)) != RKNN_SUCC) {
+            std::ostringstream oss;
+            oss << "RKNN_QUERY_OUTPUT_ATTR failed for output " << i;
+            disabled_reason_ = oss.str();
+            return false;
+        }
+    }
+
+    if (impl_->input_attr.n_dims < 4) {
+        disabled_reason_ = "unsupported RKNN input dims";
+        return false;
+    }
+
+    if (impl_->input_attr.fmt == RKNN_TENSOR_NCHW) {
+        impl_->input_channels = static_cast<int>(impl_->input_attr.dims[1]);
+        impl_->input_height = static_cast<int>(impl_->input_attr.dims[2]);
+        impl_->input_width = static_cast<int>(impl_->input_attr.dims[3]);
+    } else {
+        impl_->input_height = static_cast<int>(impl_->input_attr.dims[1]);
+        impl_->input_width = static_cast<int>(impl_->input_attr.dims[2]);
+        impl_->input_channels = static_cast<int>(impl_->input_attr.dims[3]);
+    }
+
+    if (impl_->input_channels != 3) {
+        disabled_reason_ = "current preprocessing only supports 3-channel models";
+        return false;
+    }
+
+    std::cout << "RKNN detector ready"
+              << " | model=" << config_.model_path
+              << " | input=" << impl_->input_width << "x" << impl_->input_height
+              << " | outputs=" << impl_->io_num.n_output
+              << std::endl;
+
+    initialized_ = true;
+    return true;
+#else
+    disabled_reason_ = "RKNN runtime headers/libraries were not found at build time";
+    return false;
+#endif
+}
+
+bool RknnDetector::isEnabled() const {
+    return initialized_;
+}
+
+std::string RknnDetector::backendName() const {
+    return initialized_ ? "rknn" : "disabled";
+}
+
+ai::AiResult RknnDetector::infer(const CapturedFrame& frame) {
+    ai::AiResult result;
+    result.frame_sequence = frame.sequence;
+    result.capture_time_us = frame.capture_time_us;
+    result.backend = backendName();
+    result.note = disabled_reason_;
+
+    if (!initialized_) {
+        return result;
+    }
+
+#if defined(AICAM_HAS_RKNN) && AICAM_HAS_RKNN
+    LetterboxInfo letterbox;
+
+    const auto preprocess_begin = std::chrono::steady_clock::now();
+    fillLetterboxedRgb(frame, impl_->input_width, impl_->input_height, impl_->rgb_input, letterbox);
+    const auto preprocess_end = std::chrono::steady_clock::now();
+    result.preprocess_ms = std::chrono::duration<double, std::milli>(
+        preprocess_end - preprocess_begin
+    ).count();
+
+    rknn_input input {};
+    input.index = 0;
+    input.buf = impl_->rgb_input.data();
+    input.size = static_cast<uint32_t>(impl_->rgb_input.size());
+    input.pass_through = 0;
+    input.type = RKNN_TENSOR_UINT8;
+    input.fmt = RKNN_TENSOR_NHWC;
+
+    if (rknn_inputs_set(impl_->context, 1, &input) != RKNN_SUCC) {
+        result.note = "rknn_inputs_set failed";
+        return result;
+    }
+
+    const auto infer_begin = std::chrono::steady_clock::now();
+    if (rknn_run(impl_->context, nullptr) != RKNN_SUCC) {
+        result.note = "rknn_run failed";
+        return result;
+    }
+
+    std::vector<rknn_output> outputs(impl_->io_num.n_output);
+    for (uint32_t i = 0; i < impl_->io_num.n_output; ++i) {
+        outputs[i].index = i;
+        outputs[i].want_float = 1;
+        outputs[i].is_prealloc = 0;
+    }
+
+    if (rknn_outputs_get(impl_->context, impl_->io_num.n_output, outputs.data(), nullptr) != RKNN_SUCC) {
+        result.note = "rknn_outputs_get failed";
+        return result;
+    }
+    const auto infer_end = std::chrono::steady_clock::now();
+
+    rknn_perf_run perf_run {};
+    if (rknn_query(impl_->context, RKNN_QUERY_PERF_RUN, &perf_run, sizeof(perf_run)) == RKNN_SUCC) {
+        result.inference_ms = static_cast<double>(perf_run.run_duration) / 1000.0;
+    } else {
+        result.inference_ms = std::chrono::duration<double, std::milli>(
+            infer_end - infer_begin
+        ).count();
+    }
+
+    const auto postprocess_begin = std::chrono::steady_clock::now();
+
+    std::vector<ai::Detection> detections;
+    std::string parse_note;
+    for (size_t output_index = 0; output_index < outputs.size(); ++output_index) {
+        const auto& attr = impl_->output_attrs[output_index];
+
+        std::vector<uint32_t> dims;
+        for (uint32_t i = 0; i < attr.n_dims; ++i) {
+            dims.push_back(attr.dims[i]);
+        }
+
+        int rows = 0;
+        int attrs = 0;
+        bool attr_major = false;
+        if (!inferTensorLayout(dims, rows, attrs, attr_major)) {
+            std::ostringstream oss;
+            oss << "output " << output_index
+                << " layout unsupported, dims=";
+            for (size_t i = 0; i < dims.size(); ++i) {
+                if (i != 0) {
+                    oss << 'x';
+                }
+                oss << dims[i];
+            }
+            parse_note = oss.str();
+            continue;
+        }
+
+        const auto* tensor = static_cast<const float*>(outputs[output_index].buf);
+        if (tensor == nullptr) {
+            continue;
+        }
+
+        for (int row = 0; row < rows; ++row) {
+            const float b0 = readTensorValue(tensor, rows, attrs, attr_major, row, 0);
+            const float b1 = readTensorValue(tensor, rows, attrs, attr_major, row, 1);
+            const float b2 = readTensorValue(tensor, rows, attrs, attr_major, row, 2);
+            const float b3 = readTensorValue(tensor, rows, attrs, attr_major, row, 3);
+
+            float score = 0.0f;
+            int class_id = 0;
+
+            if (attrs == 5) {
+                score = readTensorValue(tensor, rows, attrs, attr_major, row, 4);
+                class_id = 0;
+            } else if (attrs == 6) {
+                score = readTensorValue(tensor, rows, attrs, attr_major, row, 4);
+                class_id = static_cast<int>(
+                    std::round(readTensorValue(tensor, rows, attrs, attr_major, row, 5))
+                );
+            } else if (config_.has_objectness && attrs > 5) {
+                const float objectness = readTensorValue(tensor, rows, attrs, attr_major, row, 4);
+                float best_class_score = -std::numeric_limits<float>::infinity();
+                int best_class_id = 0;
+                for (int attr_index = 5; attr_index < attrs; ++attr_index) {
+                    const float class_score = readTensorValue(
+                        tensor,
+                        rows,
+                        attrs,
+                        attr_major,
+                        row,
+                        attr_index
+                    );
+                    if (class_score > best_class_score) {
+                        best_class_score = class_score;
+                        best_class_id = attr_index - 5;
+                    }
+                }
+
+                class_id = best_class_id;
+                score = objectness * best_class_score;
+            } else {
+                float best_class_score = -std::numeric_limits<float>::infinity();
+                int best_class_id = 0;
+                for (int attr_index = 4; attr_index < attrs; ++attr_index) {
+                    const float class_score = readTensorValue(
+                        tensor,
+                        rows,
+                        attrs,
+                        attr_major,
+                        row,
+                        attr_index
+                    );
+                    if (class_score > best_class_score) {
+                        best_class_score = class_score;
+                        best_class_id = attr_index - 4;
+                    }
+                }
+
+                class_id = best_class_id;
+                score = best_class_score;
+            }
+
+            if (score < config_.score_threshold) {
+                continue;
+            }
+
+            float x1 = 0.0f;
+            float y1 = 0.0f;
+            float x2 = 0.0f;
+            float y2 = 0.0f;
+
+            float box0 = b0;
+            float box1 = b1;
+            float box2 = b2;
+            float box3 = b3;
+
+            if (looksNormalized(box0, box1, box2, box3)) {
+                box0 *= static_cast<float>(impl_->input_width);
+                box1 *= static_cast<float>(impl_->input_height);
+                box2 *= static_cast<float>(impl_->input_width);
+                box3 *= static_cast<float>(impl_->input_height);
+            }
+
+            if (config_.box_format == "xyxy") {
+                x1 = box0;
+                y1 = box1;
+                x2 = box2;
+                y2 = box3;
+            } else {
+                x1 = box0 - box2 * 0.5f;
+                y1 = box1 - box3 * 0.5f;
+                x2 = box0 + box2 * 0.5f;
+                y2 = box1 + box3 * 0.5f;
+            }
+
+            x1 = (x1 - static_cast<float>(letterbox.pad_x)) / letterbox.scale;
+            y1 = (y1 - static_cast<float>(letterbox.pad_y)) / letterbox.scale;
+            x2 = (x2 - static_cast<float>(letterbox.pad_x)) / letterbox.scale;
+            y2 = (y2 - static_cast<float>(letterbox.pad_y)) / letterbox.scale;
+
+            x1 = clampFloat(x1, 0.0f, static_cast<float>(frame.width - 1));
+            y1 = clampFloat(y1, 0.0f, static_cast<float>(frame.height - 1));
+            x2 = clampFloat(x2, 0.0f, static_cast<float>(frame.width - 1));
+            y2 = clampFloat(y2, 0.0f, static_cast<float>(frame.height - 1));
+
+            if (x2 <= x1 || y2 <= y1) {
+                continue;
+            }
+
+            ai::Detection detection;
+            detection.class_id = class_id;
+            detection.score = score;
+            detection.x1 = x1;
+            detection.y1 = y1;
+            detection.x2 = x2;
+            detection.y2 = y2;
+
+            if (class_id >= 0 && class_id < static_cast<int>(impl_->labels.size())) {
+                detection.label = impl_->labels[class_id];
+            } else {
+                detection.label = "class_" + std::to_string(class_id);
+            }
+
+            detections.push_back(std::move(detection));
+        }
+    }
+
+    result.detections = applyNms(
+        std::move(detections),
+        config_.nms_threshold,
+        config_.max_results
+    );
+    if (!result.detections.empty()) {
+        parse_note.clear();
+    }
+    result.postprocess_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - postprocess_begin
+    ).count();
+    result.valid = true;
+    result.note = parse_note;
+
+    rknn_outputs_release(impl_->context, impl_->io_num.n_output, outputs.data());
+    return result;
+#else
+    return result;
+#endif
+}
