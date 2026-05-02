@@ -164,10 +164,7 @@ http://<board-ip>:8080/
 
 ## 文档
 
-- [项目计划书](docs/PROJECT_PLAN.md)
 - [部署说明](docs/DEPLOYMENT.md)
-- [基线测试记录](docs/BASELINE_TEST.md)
-- [操作日志](docs/OPERATION_LOG.md)
 
 ## 项目亮点
 
