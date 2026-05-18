@@ -29,9 +29,11 @@ bool EventLogger::initialize() {
     return true;
 }
 
+// 写入一条ai事件日志
 void EventLogger::write(const ai::AiResult& result) {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    // 控制台打印
     std::cout << "[event] frame=" << result.frame_sequence
               << " detections=" << result.detections.size()
               << " infer_ms=" << result.inference_ms
@@ -51,6 +53,7 @@ void EventLogger::write(const ai::AiResult& result) {
             << "\"note\":\"" << escapeJson(result.note) << "\","
             << "\"detections\":[";
 
+    // 遍历每个检测结果，写入类别ID、标签、置信度和坐标等信息
     for (size_t i = 0; i < result.detections.size(); ++i) {
         const auto& det = result.detections[i];
         if (i != 0) {
@@ -69,9 +72,12 @@ void EventLogger::write(const ai::AiResult& result) {
     }
 
     stream_ << "]}\n";
+    // 立刻把缓冲区内容写入文件，避免程序崩溃时丢失日志
     stream_.flush();
+
 }
 
+// 用于把普通字符串转成 JSON 安全字符串
 std::string EventLogger::escapeJson(const std::string& input) const {
     std::string output;
     output.reserve(input.size());

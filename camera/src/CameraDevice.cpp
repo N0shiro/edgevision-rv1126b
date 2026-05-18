@@ -104,11 +104,15 @@ void CameraDevice::initCamera() {
 
     width = static_cast<int>(fmt.fmt.pix_mp.width);
     height = static_cast<int>(fmt.fmt.pix_mp.height);
+    // 读取一行图像在内存实际占多少字节
+    // （可能大于宽度，取决于驱动的对齐要求）
     bytesPerLine = fmt.fmt.pix_mp.plane_fmt[0].bytesperline;
     if (bytesPerLine == 0) {
         bytesPerLine = static_cast<uint32_t>(width);
     }
+    // 读取驱动认为一帧需要的缓冲区大小
     sizeImage = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
+
     sourceVirHeight = derive_vir_height(sizeImage, bytesPerLine, static_cast<uint32_t>(height));
 
     print_fourcc(fmt.fmt.pix_mp.pixelformat);
@@ -118,8 +122,12 @@ void CameraDevice::initCamera() {
               << " | sizeimage: " << sizeImage
               << " | 推导源 VirHeight: " << sourceVirHeight << std::endl;
 
+
+    // 准备缓冲区
     struct v4l2_requestbuffers req;
     memset(&req, 0, sizeof(req)); 
+    // 申请 4 个缓冲区，
+    // 实际数量可能由驱动调整，但至少要申请几个以确保流畅捕捉
     req.count = 4; 
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE; // 多平面缓冲
     req.memory = V4L2_MEMORY_MMAP; 
@@ -131,6 +139,7 @@ void CameraDevice::initCamera() {
         exit(EXIT_FAILURE);
     }
     
+    // 保存实际分配的缓冲区数量
     bufferCount = req.count; 
     buffers = new VideoBuffer[bufferCount]; 
     
@@ -155,6 +164,8 @@ void CameraDevice::initCamera() {
         }
 
         buffers[i].length = buf.m.planes[0].length; 
+
+        // 把驱动的第i个缓冲区映射到当前进程
         buffers[i].start = mmap(NULL, buf.m.planes[0].length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.planes[0].m.mem_offset); 
         
         if (buffers[i].start == MAP_FAILED) {
@@ -174,9 +185,13 @@ void CameraDevice::initCamera() {
     std::cout << " 4个多平面缓冲区内存映射完毕，并已入队！" << std::endl;
 }
 
+// 通知v4l2驱动开始采集视频帧
 void CameraDevice::startStream() {
+
+    // 选择启动的视频流类型，这里是多平面视频采集流
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     
+    // stream on
     if (ioctl(fd, VIDIOC_STREAMON, &type) < 0) {
         std::cerr << "开启视频流失败！" << std::endl;
         exit(EXIT_FAILURE);
@@ -184,6 +199,8 @@ void CameraDevice::startStream() {
     std::cout << " ISP 硬件加速视频流已启动！" << std::endl;
 }
 
+// 从摄像头取出一帧 NV12 图像，
+// 整理成紧凑连续的 YUV 数据，放到 out_yuv 里。
 bool CameraDevice::captureFrame(unsigned char* out_yuv) {
     struct v4l2_buffer buf;
     struct v4l2_plane planes[1];
@@ -206,6 +223,7 @@ bool CameraDevice::captureFrame(unsigned char* out_yuv) {
 
     if (ioctl(fd, VIDIOC_DQBUF, &buf) < 0) return false;
 
+    // 找到这一帧图像在内存中的起始地址
     const auto* src = static_cast<const uint8_t*>(buffers[buf.index].start);
     uint32_t frameBytes = buf.m.planes[0].bytesused;
     uint32_t sourceStride = bytesPerLine == 0 ? static_cast<uint32_t>(width) : bytesPerLine;

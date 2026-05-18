@@ -8,6 +8,7 @@ namespace {
 constexpr uint8_t kOverlayOutlineLuma = 24;
 constexpr uint8_t kOverlayBoxLuma = 235;
 
+// 限制坐标在有效范围
 int clampCoordinate(int value, int lower, int upper) {
     if (upper < lower) {
         return lower;
@@ -26,10 +27,11 @@ void DetectionOverlay::update(const ai::AiResult& result) {
     if (!enabled_ || !result.valid) {
         return;
     }
-
+    // 加锁防止snapshot_被update和apply同时访问时出现数据竞争
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_.valid = true;
     snapshot_.frame_sequence = result.frame_sequence;
+    // 保存检测框列表
     snapshot_.detections = result.detections;
 }
 
@@ -38,6 +40,9 @@ void DetectionOverlay::apply(CapturedFrame& frame) const {
         return;
     }
 
+    // 使用快照机制，避免在apply里直接访问snapshot_
+    // 导致update和apply之间的数据竞争
+    // 锁只保护读取瞬间，后续画框就不用占用
     Snapshot snapshot;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -52,6 +57,8 @@ void DetectionOverlay::apply(CapturedFrame& frame) const {
         return;
     }
 
+    // 如果帧序号相差过大，说明快照已经过时了，
+    // 就不画了，等update更新新快照
     if (frame.sequence - snapshot.frame_sequence > static_cast<uint64_t>(stale_frame_window_)) {
         return;
     }
@@ -59,6 +66,7 @@ void DetectionOverlay::apply(CapturedFrame& frame) const {
     drawDetections(frame.nv12, frame.width, frame.height, snapshot.detections);
 }
 
+// 遍历检测框列表，在NV12的Y平面上画框
 void DetectionOverlay::drawDetections(
     std::vector<uint8_t>& nv12,
     int width,
@@ -115,6 +123,7 @@ void DetectionOverlay::drawDetections(
     }
 }
 
+// 修改y平面
 void DetectionOverlay::drawRectangleY(
     uint8_t* y_plane,
     int width,
@@ -130,6 +139,7 @@ void DetectionOverlay::drawRectangleY(
         return;
     }
 
+    // 整理矩形边界
     const int left = clampCoordinate(std::min(x1, x2), 0, width - 1);
     const int right = clampCoordinate(std::max(x1, x2), 0, width - 1);
     const int top = clampCoordinate(std::min(y1, y2), 0, height - 1);
@@ -139,6 +149,7 @@ void DetectionOverlay::drawRectangleY(
         return;
     }
 
+    // 根据厚度画边框
     for (int offset = 0; offset < thickness; ++offset) {
         const int top_row = top + offset;
         const int bottom_row = bottom - offset;

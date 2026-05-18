@@ -18,7 +18,9 @@ FramedTcpClient::~FramedTcpClient() {
     closeConnection();
 }
 
+// 只做一次尝试连接推流服务器/网关
 bool FramedTcpClient::connectOnce() {
+    // 关闭旧连接
     closeConnection();
 
     sock_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -31,12 +33,13 @@ bool FramedTcpClient::connectOnce() {
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(static_cast<uint16_t>(server_port_));
 
+    // 把字符串ip转换成二进制ip
     if (inet_pton(AF_INET, server_ip_.c_str(), &server_addr.sin_addr) <= 0) {
         std::cerr << "推流目标 IP 无效: " << server_ip_ << std::endl;
         closeConnection();
         return false;
     }
-
+    // 发起连接
     if (connect(sock_, reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
         std::cerr << "连接推流网关失败: " << std::strerror(errno) << std::endl;
         closeConnection();
@@ -47,18 +50,21 @@ bool FramedTcpClient::connectOnce() {
     return true;
 }
 
+// 发送带长度头的数据包
 bool FramedTcpClient::sendPacket(const std::vector<uint8_t>& packet) {
     if (sock_ < 0) {
         return false;
     }
 
+    // 获取payload大小(这包数据本体有多少字节)，并转换成网络字节序的4字节整数
     const uint32_t payload_size = static_cast<uint32_t>(packet.size());
     const uint32_t net_payload_size = htonl(payload_size);
 
+    // 发送四字节长度头
     if (!sendAll(reinterpret_cast<const uint8_t*>(&net_payload_size), sizeof(net_payload_size))) {
         return false;
     }
-
+    // 发送真实数据
     return sendAll(packet.data(), packet.size());
 }
 
@@ -73,6 +79,7 @@ bool FramedTcpClient::isConnected() const {
     return sock_ >= 0;
 }
 
+// 保证指定长度数据全部发送成功
 bool FramedTcpClient::sendAll(const uint8_t* data, size_t size) {
     size_t total_sent = 0;
     while (total_sent < size) {
@@ -91,7 +98,7 @@ bool FramedTcpClient::sendAll(const uint8_t* data, size_t size) {
         if (sent < 0 && errno == EINTR) {
             continue;
         }
-
+        // 暂时不能写，等待1000微秒
         if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             usleep(1000);
             continue;

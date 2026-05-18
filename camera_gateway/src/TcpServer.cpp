@@ -37,8 +37,8 @@ size_t findStartCode(const std::vector<uint8_t>& data, size_t from, size_t& pref
     return std::string::npos;
 }
 
-// [修改说明] 判断完整帧里是否包含某种 NALU 类型。
-// [修改说明] IDR(type=5) 到来时会顺手更新 bootstrap_frame，方便新观众快速起播。
+//  判断完整帧里是否包含某种 NALU 类型。
+//  IDR(type=5) 到来时会顺手更新 bootstrap_frame，方便新观众快速起播。
 bool containsNalType(const std::vector<uint8_t>& data, uint8_t nal_type) {
     size_t offset = 0;
     while (true) {
@@ -141,10 +141,10 @@ void TcpServer::setNonBlocking(int fd) {
 
 //  安全清理观众资源
 void TcpServer::removeViewer(int fd) {
-    // [修改说明] 虽然函数名沿用 removeViewer，但现在统一清理：
-    // [修改说明] 1. VLC 观众连接
-    // [修改说明] 2. 摄像头生产者连接
-    // [修改说明] 3. 尚未判定身份的新连接
+    //  虽然函数名沿用 removeViewer，但现在统一清理：
+    //  1. VLC 观众连接
+    //  2. 摄像头生产者连接
+    //  3. 尚未判定身份的新连接
     bool should_close = false;
     bool was_viewer = false;
 
@@ -183,8 +183,8 @@ void TcpServer::removeViewer(int fd) {
     }
 }
 
-// [修改说明] 专门处理 VLC 的 HTTP 接入。
-// [修改说明] 新观众接入后，先把 HTTP 头入队，再补最近的关键启动帧。
+//  专门处理 VLC 的 HTTP 接入。
+//  新观众接入后，先把 HTTP 头入队，再补最近的关键启动帧。
 void TcpServer::handleViewerRequest(int fd) {
     std::cout << " HTTP 请求到达,专属发送队列:FD [" << fd << "]" << std::endl;
 
@@ -210,7 +210,7 @@ void TcpServer::handleViewerRequest(int fd) {
             viewer->send_queue.push_back(bootstrap_config);
         }
         if (!bootstrap_frame.empty()) {
-            // [修改说明] 把最近一帧可起播关键帧也塞给新观众，减少“只见 VLC logo 不出画”的概率。
+            //  把最近一帧可起播关键帧也塞给新观众，减少“只见 VLC logo 不出画”的概率。
             viewer->send_queue.push_back(bootstrap_frame);
         }
     }
@@ -223,8 +223,8 @@ void TcpServer::handleViewerRequest(int fd) {
     sender_cv.notify_one(); // 敲锣叫醒发送线程干活！
 }
 
-// [修改说明] 这里把摄像头发来的“长度前缀 + 帧数据”流重新拼成完整一帧。
-// [修改说明] 只有拼出一整帧之后，才允许进入后续广播流程。
+//  这里把摄像头发来的“长度前缀 + 帧数据”流重新拼成完整一帧。
+//  只有拼出一整帧之后，才允许进入后续广播流程。
 bool TcpServer::handleProducerBytes(int fd, const uint8_t* data, size_t size) {
     std::vector<std::vector<uint8_t>> ready_frames;
     bool invalid_stream = false;
@@ -277,7 +277,7 @@ bool TcpServer::handleProducerBytes(int fd, const uint8_t* data, size_t size) {
     return true;
 }
 
-// [修改说明] 完整帧到达后，在这里做“关键帧缓存 + 广播”两件事。
+//  完整帧到达后，在这里做“关键帧缓存 + 广播”两件事。
 void TcpServer::handleCompleteFrame(const std::vector<uint8_t>& frame) {
     std::vector<uint8_t> config = extractBootstrapConfig(frame);
     if (!config.empty()) {
@@ -288,15 +288,16 @@ void TcpServer::handleCompleteFrame(const std::vector<uint8_t>& frame) {
     if (containsNalType(frame, 5)) {
         std::lock_guard<std::mutex> lock(bootstrap_mtx);
         bootstrap_frame = frame;
-        // [修改说明] 对硬编码链路不再假设“IDR 一定自带 SPS/PPS”。
-        // [修改说明] 现在由 bootstrap_config 单独缓存配置头，再与最近 IDR 组合给新观众起播。
+        //  对硬编码链路不再假设“IDR 一定自带 SPS/PPS”。
+        //  现在由 bootstrap_config 单独缓存配置头，再与最近 IDR 组合给新观众起播。
     }
 
+    // 把当前帧放到观众发送队列
     queueFrameForViewers(frame);
 }
 
-// [修改说明] 低延迟优化：观众过慢时，不再继续累积历史帧，也不再直接踢掉。
-// [修改说明] 策略改为“保留正在发送的数据，丢弃最旧的未发送完整帧，优先追最新画面”。
+//  低延迟优化：观众过慢时，不再继续累积历史帧，也不再直接踢掉。
+//  策略改为“保留正在发送的数据，丢弃最旧的未发送完整帧，优先追最新画面”。
 void TcpServer::queueFrameForViewers(const std::vector<uint8_t>& frame) {
     std::vector<int> dead_fds;
 
@@ -348,11 +349,15 @@ void TcpServer::queueFrameForViewers(const std::vector<uint8_t>& frame) {
     sender_cv.notify_one(); // 敲锣叫醒发送线程！
 }
 
-// ==========================================
-//  核心引擎 1：专门处理发送、重试、断点续传的后台线程！
-// ==========================================
+
+//  专门处理发送、重试、断点续传的后台线程
+
 void TcpServer::senderLoop() {
     while (is_running) {
+        // 没有数据时别一直空转占 CPU
+        // 有新帧时可以被唤醒
+        // 最多 5ms 也会自己醒一次检查
+
         // 1. 稍微等一下，如果有新数据会被立刻唤醒，防 CPU 空转
         std::unique_lock<std::mutex> lock(sender_mtx);
         sender_cv.wait_for(lock, std::chrono::milliseconds(5));
@@ -366,11 +371,11 @@ void TcpServer::senderLoop() {
                 auto viewer = pair.second;
                 std::lock_guard<std::mutex> q_lock(viewer->mtx);
 
-                // 2. 只要这个观众的弹药库里还有数据，就一直尝试发！
+                // 2. 只要这个观众的库里还有数据，就一直尝试发
                 while (!viewer->send_queue.empty() && viewer->active) {
                     auto& chunk = viewer->send_queue.front();
                     
-                    // 3. 核心绝杀：断点续传！从 current_offset 的位置开始发剩下的！
+                    // 3. 断点续传 从 current_offset 的位置开始发剩下的
                     ssize_t sent = send(
                         viewer->fd,
                         chunk.data() + viewer->current_offset,
@@ -380,15 +385,15 @@ void TcpServer::senderLoop() {
 
                     if (sent > 0) {
                         viewer->current_offset += static_cast<size_t>(sent);
-                        // 如果这一块数据全部发完了，才能从队列里扔掉！
+                        // 如果这一块数据全部发完了，才能从队列里扔掉
                         if (viewer->current_offset == chunk.size()) {
                             viewer->send_queue.pop_front();
                             viewer->current_offset = 0;
                         }
                     } 
                     else if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
-                        //  网卡发送缓冲区满了！完美！我们保留 current_offset，直接 break！
-                        // 退出当前观众的循环，等下一轮再继续发他剩下的数据！
+                        //  网卡发送缓冲区满了 保留 current_offset，直接 break
+                        // 退出当前观众的循环，等下一轮再继续发他剩下的数据
                         break; 
                     } 
                     else {
@@ -401,7 +406,7 @@ void TcpServer::senderLoop() {
             }
         }
 
-        // 4. 打扫战场，踢掉掉线的人
+        // 4. 踢掉掉线的
         for (int fd : dead_fds) {
             removeViewer(fd);
         }
@@ -426,7 +431,7 @@ void TcpServer::start() {
 
 
     while (is_running) {
-//  
+        // 等待epoll事件
         int nfds = epoll_wait(epoll_fd, events, 1024, -1);
 
         if (nfds < 0) {
@@ -436,7 +441,7 @@ void TcpServer::start() {
             std::cerr << " epoll_wait 失败！" << std::endl;
             break;
         }
-
+        // 逐个处理就绪fd
         for (int i = 0; i < nfds; ++i) {
             if (events[i].data.fd == server_fd) {
                 // 处理新连接
@@ -458,7 +463,7 @@ void TcpServer::start() {
                     client_event.data.fd = client_fd;
                     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &client_event);
 
-                    // [修改说明] 新连接先不急着认身份，先放进 pending_probe，等收到首包再决定它是 VLC 还是摄像头。
+                    //  新连接先不急着认身份，先放进 pending_probe，等收到首包再决定它是 VLC 还是摄像头。
                     {
                         std::lock_guard<std::mutex> lock(producers_mtx);
                         pending_probe[client_fd] = {};
@@ -474,7 +479,7 @@ void TcpServer::start() {
 
                 char buffer[65536];
                 
-                //  绝对的单线程读取，保证时序严丝合缝！
+                //  单线程读取
                 ssize_t bytes_read = read(active_client_fd, buffer, sizeof(buffer));
 
                 if (bytes_read > 0) {
@@ -484,7 +489,7 @@ void TcpServer::start() {
                         is_known_viewer = viewers.find(active_client_fd) != viewers.end();
                     }
 
-                    // [修改说明] 观众连接除首次 GET 外，不需要再读取后续业务数据，直接忽略即可。
+                    //  观众连接除首次 GET 外，不需要再读取后续业务数据，直接忽略即可。
                     if (is_known_viewer) {
                         continue;
                     }
@@ -504,9 +509,9 @@ void TcpServer::start() {
                         continue;
                     }
 
-                    // [修改说明] 首包判定逻辑：
-                    // [修改说明] 前 4 字节如果是 "GET "，说明是 VLC；
-                    // [修改说明] 否则就当作摄像头发来的“长度前缀流”。
+                    //  首包判定逻辑：
+                    //  前 4 字节如果是 "GET "，说明是 VLC；
+                    //  否则就当作摄像头发来的“长度前缀流”。
                     bool become_viewer = false;
                     std::vector<uint8_t> first_producer_chunk;
 

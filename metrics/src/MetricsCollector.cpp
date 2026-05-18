@@ -80,6 +80,8 @@ void MetricsCollector::recordAiQueueDrop() {
     ai_queue_drops_.fetch_add(1, std::memory_order_relaxed);
 }
 
+
+// 把累计计数器转换成一份当前的指标快照
 MetricsSnapshot MetricsCollector::sample() {
     std::lock_guard<std::mutex> lock(sample_mutex_);
 
@@ -140,6 +142,7 @@ MetricsSnapshot MetricsCollector::sample() {
     return snapshot;
 }
 
+// 从linux/proc读取CPU和内存使用情况的样本
 MetricsCollector::ProcSample MetricsCollector::readProcSample() const {
     ProcSample sample;
 

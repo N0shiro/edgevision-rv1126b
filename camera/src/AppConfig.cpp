@@ -4,8 +4,10 @@
 #include <iostream>
 #include <string>
 
+// 匿名命名空间，使内部函数只在本cpp可见
 namespace {
 
+//读取环境变量，不存在使用默认值
 int readIntEnv(const char* key, int default_value) {
     const char* value = std::getenv(key);
     if (value == nullptr || *value == '\0') {
@@ -19,6 +21,7 @@ float readFloatEnv(const char* key, float default_value) {
     if (value == nullptr || *value == '\0') {
         return default_value;
     }
+// char--double--float
     return static_cast<float>(std::atof(value));
 }
 
@@ -72,6 +75,7 @@ AppConfig AppConfig::fromEnvironment() {
     config.ai.box_format = readStringEnv("AICAM_BOX_FORMAT", config.ai.box_format);
     config.ai.enabled = readBoolEnv("AICAM_AI_ENABLE", !config.ai.model_path.empty());
 
+// 防止用户配置了不合理的值导致程序异常，做一些兜底修正
     if (config.metrics_interval_sec <= 0) {
         config.metrics_interval_sec = 5;
     }
