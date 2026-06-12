@@ -25,6 +25,11 @@ models/*.rknn
 *.log
 *.pyc
 scripts/__pycache__/
+qt_dashboard/.venv/
+qt_dashboard/runtime/
+qt_dashboard/build/
+qt_dashboard/dist/
+qt_dashboard/*.spec
 docs/OPERATION_LOG.md
 优化日志.md
 占用情况.md

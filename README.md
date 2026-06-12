@@ -167,6 +167,31 @@ http://<board-ip>:8080/
 - 指标日志：`logs/metrics.jsonl`
 - 网关输出：`logs/gateway.out`
 
+## PyQt 上位机
+
+阶段 2 新增 `qt_dashboard/` 上位机 MVP，支持 `ADB USB`、局域网和离线日志三种模式：
+
+- `ADB USB`：自动执行 `adb forward tcp:18080 tcp:8080`，并定时拉取板端 `events.jsonl` / `metrics.jsonl`
+- 局域网：直接连接 `http://<board-ip>:8080/`
+- 离线日志：读取本地 JSONL 文件用于无开发板演示
+- 界面展示实时视频、检测事件表、类别数量统计、FPS/CPU/内存/推理耗时曲线，并支持 CSV 导出
+
+运行方式：
+
+```bash
+cd qt_dashboard
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+Windows PowerShell 下激活虚拟环境：
+
+```powershell
+.\.venv\Scripts\activate
+```
+
 ## 文档
 
 - [部署说明](docs/DEPLOYMENT.md)
