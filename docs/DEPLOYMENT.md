@@ -82,6 +82,12 @@ export SDK_ROOT=<sdk-root>
 ```bash
 export AICAM_GATEWAY_IP=127.0.0.1
 export AICAM_GATEWAY_PORT=8080
+export AICAM_VIDEO_DEVICE=/dev/video13
+export AICAM_WIDTH=1920
+export AICAM_HEIGHT=1080
+export AICAM_FPS=30
+export AICAM_BITRATE_KBPS=4096
+export AICAM_GOP=30
 export AICAM_RKNN_MODEL=/userdata/aicam/models/yolov5n_fp.rknn
 export AICAM_LABELS=/userdata/aicam/models/coco_80_labels.txt
 export AICAM_AI_ENABLE=1

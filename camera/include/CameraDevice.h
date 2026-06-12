@@ -11,6 +11,7 @@
 #include <cstring>              // 提供 memset (清空内存用)
 #include <cstdlib>              // 提供 exit()
 #include <sys/mman.h>          // 提供 mmap 和 munmap 用于内存映射
+#include <string>
 
 struct VideoBuffer {
     void* start;
@@ -19,7 +20,7 @@ struct VideoBuffer {
 
 class CameraDevice {    
 public:
-    CameraDevice();
+    CameraDevice(std::string device_path, int requested_width, int requested_height);
     ~CameraDevice();
     void initCamera();
     void startStream();
@@ -30,6 +31,9 @@ public:
     size_t getPackedFrameSize() const;
 private:
     int fd; // 文件描述符，代表与摄像头设备的连接   
+    std::string device_path;
+    int requested_width;
+    int requested_height;
     VideoBuffer* buffers; // 用于存储内存映射的缓冲区信息
     int bufferCount; // 缓冲区的数量
     int width;

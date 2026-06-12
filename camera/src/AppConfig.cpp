@@ -1,5 +1,6 @@
 #include "AppConfig.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -50,6 +51,11 @@ AppConfig AppConfig::fromEnvironment() {
     config.sensor_id = readIntEnv("AICAM_SENSOR_ID", config.sensor_id);
     config.fps = readIntEnv("AICAM_FPS", config.fps);
     config.iq_dir = readStringEnv("AICAM_IQ_DIR", config.iq_dir);
+    config.video_device = readStringEnv("AICAM_VIDEO_DEVICE", config.video_device);
+    config.video_width = readIntEnv("AICAM_WIDTH", config.video_width);
+    config.video_height = readIntEnv("AICAM_HEIGHT", config.video_height);
+    config.bitrate_kbps = readIntEnv("AICAM_BITRATE_KBPS", config.bitrate_kbps);
+    config.gop = readIntEnv("AICAM_GOP", config.fps);
 
     config.gateway_ip = readStringEnv("AICAM_GATEWAY_IP", config.gateway_ip);
     config.gateway_port = readIntEnv("AICAM_GATEWAY_PORT", config.gateway_port);
@@ -79,6 +85,27 @@ AppConfig AppConfig::fromEnvironment() {
     if (config.metrics_interval_sec <= 0) {
         config.metrics_interval_sec = 5;
     }
+    if (config.fps <= 0) {
+        config.fps = 30;
+    }
+    if (config.video_device.empty()) {
+        config.video_device = "/dev/video13";
+    }
+    if (config.video_width <= 0) {
+        config.video_width = 1920;
+    }
+    if (config.video_height <= 0) {
+        config.video_height = 1080;
+    }
+    if (config.bitrate_kbps <= 0) {
+        config.bitrate_kbps = 4096;
+    }
+    if (config.gop <= 0) {
+        config.gop = config.fps;
+    }
+    if (config.gateway_port <= 0 || config.gateway_port > 65535) {
+        config.gateway_port = 8080;
+    }
     if (config.encode_queue_capacity <= 0) {
         config.encode_queue_capacity = 5;
     }
@@ -103,6 +130,11 @@ void AppConfig::printSummary() const {
     std::cout << "sensor_id=" << sensor_id
               << " fps=" << fps
               << " iq_dir=" << iq_dir
+              << std::endl;
+    std::cout << "video_device=" << video_device
+              << " resolution=" << video_width << 'x' << video_height
+              << " bitrate_kbps=" << bitrate_kbps
+              << " gop=" << gop
               << std::endl;
     std::cout << "gateway=" << gateway_ip << ':' << gateway_port
               << " encode_queue=" << encode_queue_capacity

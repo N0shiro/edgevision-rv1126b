@@ -13,7 +13,7 @@ extern "C" {
 
 class H264Encoder {
 public:
-    H264Encoder(int width, int height, int fps);
+    H264Encoder(int width, int height, int fps, int bitrate_kbps, int gop);
     ~H264Encoder();
 
     bool encode(unsigned char* yuv_data, std::vector<uint8_t>& out_h264);
@@ -25,6 +25,8 @@ private:
     int width;
     int height;
     int fps;
+    int bitrate_kbps;
+    int gop;
     int channel_id;
     bool sys_initialized;
     bool channel_created;

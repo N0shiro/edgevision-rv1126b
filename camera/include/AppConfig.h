@@ -11,6 +11,16 @@ struct AppConfig {
     int fps = 30;
     // IQ 文件目录路径，由 AICAM_IQ_DIR 配置，默认使用 /etc/iqfiles。
     std::string iq_dir = "/etc/iqfiles";
+    // V4L2 视频设备节点，由 AICAM_VIDEO_DEVICE 配置。
+    std::string video_device = "/dev/video13";
+    // 摄像头采集宽度，由 AICAM_WIDTH 配置。
+    int video_width = 1920;
+    // 摄像头采集高度，由 AICAM_HEIGHT 配置。
+    int video_height = 1080;
+    // H.264 编码码率，单位 kbps，由 AICAM_BITRATE_KBPS 配置。
+    int bitrate_kbps = 4096;
+    // H.264 GOP 长度，由 AICAM_GOP 配置；默认跟随帧率。
+    int gop = 30;
 
     // camera_gateway 的 TCP 地址，camera 会把 H.264 裸流推到这里。
     std::string gateway_ip = "127.0.0.1";

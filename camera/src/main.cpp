@@ -62,11 +62,17 @@ int main() {
         std::cerr << "AIQ 未能启动，继续使用当前 ISP 状态。" << std::endl;
     }
 
-    CameraDevice camera;
+    CameraDevice camera(config.video_device, config.video_width, config.video_height);
     camera.initCamera();
     camera.startStream();
 
-    H264Encoder encoder(camera.getWidth(), camera.getHeight(), config.fps);
+    H264Encoder encoder(
+        camera.getWidth(),
+        camera.getHeight(),
+        config.fps,
+        config.bitrate_kbps,
+        config.gop
+    );
     FrameQueue encode_queue(static_cast<size_t>(config.encode_queue_capacity));
     FrameQueue ai_queue(static_cast<size_t>(config.ai_queue_capacity));
     DetectionOverlay overlay(

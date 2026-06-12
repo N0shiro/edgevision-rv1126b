@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 namespace {
 void print_fourcc(__u32 fourcc) {
@@ -32,8 +33,11 @@ uint32_t derive_vir_height(uint32_t size_image, uint32_t bytes_per_line, uint32_
 }
 
 // 构造函数
-CameraDevice::CameraDevice()
+CameraDevice::CameraDevice(std::string device_path, int requested_width, int requested_height)
     : fd(-1),
+      device_path(std::move(device_path)),
+      requested_width(requested_width),
+      requested_height(requested_height),
       buffers(nullptr),
       bufferCount(0),
       width(0),
@@ -44,9 +48,10 @@ CameraDevice::CameraDevice()
     std::cout << "CameraDevice 初始化 " << std::endl;
     
     // 1. 切换到 ISP 输出节点
-    fd = open("/dev/video13", O_RDWR);
+    fd = open(device_path.c_str(), O_RDWR);
     if (fd < 0) {
-        std::cerr << "摄像头打开失败。请检查是否使用 root 权限运行！" << std::endl;
+        std::cerr << "摄像头打开失败: " << device_path
+                  << "。请检查设备节点和 root 权限。" << std::endl;
         perror("error");
         exit(EXIT_FAILURE);
     }
@@ -90,8 +95,8 @@ void CameraDevice::initCamera() {
     
     // 3. 配置为多平面格式
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE; 
-    fmt.fmt.pix_mp.width = 1920;  // 1080P 宽度
-    fmt.fmt.pix_mp.height = 1080; // 1080P 高度
+    fmt.fmt.pix_mp.width = requested_width;
+    fmt.fmt.pix_mp.height = requested_height;
     fmt.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12; // NV12 格式
     fmt.fmt.pix_mp.field = V4L2_FIELD_ANY; 
 

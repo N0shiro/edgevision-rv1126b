@@ -6,7 +6,6 @@
 
 namespace {
 constexpr int kStreamPackCount = 8;
-constexpr int kDefaultBitrateKbps = 4096;
 constexpr int kVencTimeoutMs = 2000;
 constexpr RK_U32 kVencStreamBufCnt = 1;
 constexpr RK_U32 kVencMaxStrmCnt = 1;
@@ -66,10 +65,12 @@ void copy_compact_nv12_to_aligned_buffer(
 }
 }
 
-H264Encoder::H264Encoder(int w, int h, int frame_rate)
+H264Encoder::H264Encoder(int w, int h, int frame_rate, int bitrate_kbps, int gop)
     : width(w),
       height(h),
       fps(frame_rate),
+      bitrate_kbps(bitrate_kbps),
+      gop(gop),
       channel_id(0),
       sys_initialized(false),
       channel_created(false),
@@ -251,8 +252,8 @@ bool H264Encoder::initEncoder() {
     // 设置恒定码率
     attr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
     // gop长度，两个关键帧的间隔
-    attr.stRcAttr.stH264Cbr.u32Gop = static_cast<RK_U32>(fps);
-    attr.stRcAttr.stH264Cbr.u32BitRate = kDefaultBitrateKbps;
+    attr.stRcAttr.stH264Cbr.u32Gop = static_cast<RK_U32>(gop);
+    attr.stRcAttr.stH264Cbr.u32BitRate = static_cast<RK_U32>(bitrate_kbps);
     // 输出和输入帧率
     attr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
     attr.stRcAttr.stH264Cbr.fr32DstFrameRateNum = static_cast<RK_U32>(fps);
@@ -326,6 +327,8 @@ bool H264Encoder::initEncoder() {
     std::cout << "  VENC 输入虚拟尺寸: " << vir_width
               << "x" << vir_height
               << " | 输入缓冲: " << input_buffer_size << " 字节" << std::endl;
+    std::cout << "  VENC 码率配置: " << bitrate_kbps
+              << " kbps | GOP=" << gop << std::endl;
     std::cout << "  VENC 低延迟通道参数: stream_buf_cnt=" << kVencStreamBufCnt
               << " | max_strm_cnt=" << kVencMaxStrmCnt
               << " | poll_wakeup_frm_cnt=" << kVencPollWakeUpFrmCnt << std::endl;

@@ -120,6 +120,11 @@ cmake --build camera/build-aicam-check -j4
 
 - `AICAM_GATEWAY_IP`
 - `AICAM_GATEWAY_PORT`
+- `AICAM_VIDEO_DEVICE`
+- `AICAM_WIDTH`
+- `AICAM_HEIGHT`
+- `AICAM_BITRATE_KBPS`
+- `AICAM_GOP`
 - `AICAM_RKNN_MODEL`
 - `AICAM_LABELS`
 - `AICAM_OVERLAY_ENABLE`
@@ -176,7 +181,6 @@ http://<board-ip>:8080/
 ## 已知限制
 
 - 当前网关输出仍为 `HTTP + 裸 H.264`
-- 摄像头设备默认仍为 `/dev/video13`
-- 默认输入分辨率仍为 `1920x1080`
+- 摄像头设备、输入分辨率、码率和 GOP 已支持通过环境变量配置，默认仍为 `/dev/video13`、`1920x1080`、`4096 kbps`
 - RKNN 后处理目前优先面向 YOLO 风格检测输出，不覆盖所有模型
 - 当前尚未实现截图留存和 Web 展示层
