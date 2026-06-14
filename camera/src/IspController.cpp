@@ -4,14 +4,20 @@
 #include <iostream>
 
 extern "C" {
-#include <rkaiq/uAPI2/rk_aiq_user_api2_imgproc.h>
+#include <rkaiq/uAPI2/rk_aiq_user_api2_isp35.h>
 #include <rkaiq/uAPI2/rk_aiq_user_api2_sysctl.h>
 }
 
-IspController::IspController(int sensor_id_value, int fps_value, std::string iq_dir_value)
+IspController::IspController(
+    int sensor_id_value,
+    int fps_value,
+    std::string iq_dir_value,
+    float btnr_strength_value
+)
     : sensor_id(sensor_id_value),
       fps(fps_value),
       iq_dir(std::move(iq_dir_value)),
+      btnr_strength(btnr_strength_value),
       ctx(nullptr),
       running(false) {}
 
@@ -76,6 +82,19 @@ bool IspController::start() {
     ret = rk_aiq_uapi2_setFrameRate(ctx, frame_rate);
     if (ret != XCAM_RETURN_NO_ERROR) {
         std::cerr << " AIQ 帧率设置失败: " << ret << std::endl;
+    }
+
+    if (btnr_strength >= 0.0f) {
+        abtnr_strength_t strength;
+        std::memset(&strength, 0, sizeof(strength));
+        strength.en = true;
+        strength.percent = btnr_strength;
+        ret = rk_aiq_user_api2_btnr_SetStrength(ctx, &strength);
+        if (ret != XCAM_RETURN_NO_ERROR) {
+            std::cerr << " AIQ BTNR 强度设置失败: " << ret << std::endl;
+        } else {
+            std::cout << " AIQ BTNR 强度已设置: " << btnr_strength << std::endl;
+        }
     }
 
     running = true;

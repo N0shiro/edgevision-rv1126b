@@ -9,6 +9,7 @@ set(CMAKE_SKIP_RPATH TRUE)
 set(AICAM_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 
 option(AICAM_ENABLE_RKNN "Enable RKNN runtime integration when headers and libs are available" ON)
+option(AICAM_ENABLE_RGA "Enable Rockchip RGA accelerated AI preprocessing when available" ON)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
@@ -84,6 +85,7 @@ if(NOT ROCKIT_INCLUDE_DIR OR NOT ROCKIT_LIBRARY OR NOT ROCKCHIP_MPP_LIBRARY OR N
 endif()
 
 set(AICAM_RKNN_ENABLED 0)
+set(AICAM_RGA_ENABLED 0)
 set(AICAM_EXTRA_INCLUDE_DIRS "")
 set(AICAM_EXTRA_LIBS "")
 
@@ -122,6 +124,35 @@ if(AICAM_ENABLE_RKNN)
     endif()
 endif()
 
+if(AICAM_ENABLE_RGA)
+    find_path(RGA_INCLUDE_DIR
+        NAMES rga/im2d.h
+        HINTS ${ROCKIT_ROOT}
+        PATH_SUFFIXES
+            include
+            usr/include
+        NO_CMAKE_FIND_ROOT_PATH
+    )
+
+    find_library(RGA_LIBRARY
+        NAMES rga
+        HINTS ${ROCKIT_ROOT}
+        PATH_SUFFIXES
+            lib
+            usr/lib
+        NO_CMAKE_FIND_ROOT_PATH
+    )
+
+    if(RGA_INCLUDE_DIR AND RGA_LIBRARY)
+        set(AICAM_RGA_ENABLED 1)
+        list(APPEND AICAM_EXTRA_INCLUDE_DIRS ${RGA_INCLUDE_DIR})
+        list(APPEND AICAM_EXTRA_LIBS ${RGA_LIBRARY})
+        message(STATUS "AICAM RGA preprocessing enabled")
+    else()
+        message(WARNING "RGA headers/libraries not found. camera will use CPU preprocessing.")
+    endif()
+endif()
+
 add_executable(camera
     src/AppConfig.cpp
     src/main.cpp
@@ -151,7 +182,11 @@ target_include_directories(camera
         ${AICAM_EXTRA_INCLUDE_DIRS}
 )
 
-target_compile_definitions(camera PRIVATE AICAM_HAS_RKNN=${AICAM_RKNN_ENABLED})
+target_compile_definitions(camera
+    PRIVATE
+        AICAM_HAS_RKNN=${AICAM_RKNN_ENABLED}
+        AICAM_HAS_RGA=${AICAM_RGA_ENABLED}
+)
 
 target_link_libraries(camera
     PRIVATE

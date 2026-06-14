@@ -11,6 +11,8 @@ struct AppConfig {
     int fps = 30;
     // IQ 文件目录路径，由 AICAM_IQ_DIR 配置，默认使用 /etc/iqfiles。
     std::string iq_dir = "/etc/iqfiles";
+    // Bayer temporal noise reduction 强度，0.0~1.0；负数表示保持 IQ 默认值。
+    float btnr_strength = 0.25f;
     // V4L2 视频设备节点，由 AICAM_VIDEO_DEVICE 配置。
     std::string video_device = "/dev/video13";
     // 摄像头采集宽度，由 AICAM_WIDTH 配置。
@@ -18,7 +20,7 @@ struct AppConfig {
     // 摄像头采集高度，由 AICAM_HEIGHT 配置。
     int video_height = 1080;
     // H.264 编码码率，单位 kbps，由 AICAM_BITRATE_KBPS 配置。
-    int bitrate_kbps = 4096;
+    int bitrate_kbps = 8192;
     // H.264 GOP 长度，由 AICAM_GOP 配置；默认跟随帧率。
     int gop = 30;
 

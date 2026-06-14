@@ -16,6 +16,10 @@
 #include <rknn_api.h>
 #endif
 
+#if defined(AICAM_HAS_RGA) && AICAM_HAS_RGA
+#include <rga/im2d.h>
+#endif
+
 namespace {
 
 struct LetterboxInfo {
@@ -131,6 +135,103 @@ void fillLetterboxedRgb(
         }
     }
 }
+
+#if defined(AICAM_HAS_RGA) && AICAM_HAS_RGA
+struct RgaHandleGuard {
+    rga_buffer_handle_t handle = 0;
+
+    ~RgaHandleGuard() {
+        if (handle != 0) {
+            releasebuffer_handle(handle);
+        }
+    }
+};
+
+bool fillLetterboxedRgbWithRga(
+    const CapturedFrame& frame,
+    int dst_width,
+    int dst_height,
+    std::vector<uint8_t>& rgb,
+    LetterboxInfo& info,
+    std::string& error
+) {
+    if (frame.width <= 0 || frame.height <= 0 || dst_width <= 0 || dst_height <= 0) {
+        error = "invalid frame or model input size";
+        return false;
+    }
+
+    const size_t expected_nv12_size = static_cast<size_t>(frame.width) * frame.height * 3 / 2;
+    if (frame.nv12.size() < expected_nv12_size) {
+        error = "NV12 buffer is smaller than expected";
+        return false;
+    }
+
+    const float scale_x = static_cast<float>(dst_width) / static_cast<float>(frame.width);
+    const float scale_y = static_cast<float>(dst_height) / static_cast<float>(frame.height);
+    info.scale = std::min(scale_x, scale_y);
+    info.resized_width = std::max(1, static_cast<int>(std::round(frame.width * info.scale)));
+    info.resized_height = std::max(1, static_cast<int>(std::round(frame.height * info.scale)));
+    info.pad_x = (dst_width - info.resized_width) / 2;
+    info.pad_y = (dst_height - info.resized_height) / 2;
+
+    rgb.assign(static_cast<size_t>(dst_width) * dst_height * 3, 114);
+
+    RgaHandleGuard src_handle;
+    RgaHandleGuard dst_handle;
+    src_handle.handle = importbuffer_virtualaddr(
+        const_cast<uint8_t*>(frame.nv12.data()),
+        static_cast<int>(expected_nv12_size)
+    );
+    dst_handle.handle = importbuffer_virtualaddr(
+        rgb.data(),
+        static_cast<int>(rgb.size())
+    );
+
+    if (src_handle.handle == 0 || dst_handle.handle == 0) {
+        error = "importbuffer_virtualaddr failed";
+        return false;
+    }
+
+    rga_buffer_t src = wrapbuffer_handle(
+        src_handle.handle,
+        frame.width,
+        frame.height,
+        RK_FORMAT_YCbCr_420_SP
+    );
+    rga_buffer_t dst = wrapbuffer_handle(
+        dst_handle.handle,
+        dst_width,
+        dst_height,
+        RK_FORMAT_RGB_888
+    );
+
+    im_rect src_rect {};
+    src_rect.x = 0;
+    src_rect.y = 0;
+    src_rect.width = frame.width;
+    src_rect.height = frame.height;
+
+    im_rect dst_rect {};
+    dst_rect.x = info.pad_x;
+    dst_rect.y = info.pad_y;
+    dst_rect.width = info.resized_width;
+    dst_rect.height = info.resized_height;
+
+    IM_STATUS status = imcheck(src, dst, src_rect, dst_rect);
+    if (status != IM_STATUS_NOERROR) {
+        error = std::string("imcheck failed: ") + imStrError(status);
+        return false;
+    }
+
+    status = improcess(src, dst, {}, src_rect, dst_rect, {}, IM_SYNC);
+    if (status != IM_STATUS_SUCCESS) {
+        error = std::string("improcess failed: ") + imStrError(status);
+        return false;
+    }
+
+    return true;
+}
+#endif
 
 // 计算两个框重叠面积
 float intersectionOverUnion(const ai::Detection& lhs, const ai::Detection& rhs) {
@@ -274,6 +375,7 @@ struct RknnDetector::Impl {
     int input_channels = 0;
     std::vector<uint8_t> rgb_input;
     std::vector<std::string> labels;
+    bool rga_fallback_reported = false;
 };
 
 RknnDetector::RknnDetector(AiConfig config)
@@ -389,6 +491,12 @@ bool RknnDetector::initialize() {
               << " | model=" << config_.model_path
               << " | input=" << impl_->input_width << "x" << impl_->input_height
               << " | outputs=" << impl_->io_num.n_output
+              << " | preprocess=" << config_.preprocess_backend
+#if defined(AICAM_HAS_RGA) && AICAM_HAS_RGA
+              << "(rga_available)"
+#else
+              << "(rga_unavailable)"
+#endif
               << std::endl;
 
     initialized_ = true;
@@ -431,13 +539,38 @@ ai::AiResult RknnDetector::infer(const CapturedFrame& frame) {
     // 记录预处理时间，单位毫秒
     const auto preprocess_begin = std::chrono::steady_clock::now();
 
-    // 1. 读取 frame.nv12
-    // 2. NV12 -> RGB
-    // 3. 按模型输入尺寸等比例 resize
-    // 4. 不足部分用 114 灰色补边
-    // 5. 输出到 impl_->rgb_input
-    // 6. 把缩放比例和 padding 记录到 letterbox
-    fillLetterboxedRgb(frame, impl_->input_width, impl_->input_height, impl_->rgb_input, letterbox);
+    if (config_.preprocess_backend == "rga") {
+#if defined(AICAM_HAS_RGA) && AICAM_HAS_RGA
+        std::string rga_error;
+        if (!fillLetterboxedRgbWithRga(
+                frame,
+                impl_->input_width,
+                impl_->input_height,
+                impl_->rgb_input,
+                letterbox,
+                rga_error)) {
+            if (!impl_->rga_fallback_reported) {
+                std::cerr << "RGA 预处理失败，回退 CPU 预处理: " << rga_error << std::endl;
+                impl_->rga_fallback_reported = true;
+            }
+            fillLetterboxedRgb(frame, impl_->input_width, impl_->input_height, impl_->rgb_input, letterbox);
+        }
+#else
+        if (!impl_->rga_fallback_reported) {
+            std::cerr << "RGA 未在构建时启用，回退 CPU 预处理。" << std::endl;
+            impl_->rga_fallback_reported = true;
+        }
+        fillLetterboxedRgb(frame, impl_->input_width, impl_->input_height, impl_->rgb_input, letterbox);
+#endif
+    } else {
+        // 1. 读取 frame.nv12
+        // 2. NV12 -> RGB
+        // 3. 按模型输入尺寸等比例 resize
+        // 4. 不足部分用 114 灰色补边
+        // 5. 输出到 impl_->rgb_input
+        // 6. 把缩放比例和 padding 记录到 letterbox
+        fillLetterboxedRgb(frame, impl_->input_width, impl_->input_height, impl_->rgb_input, letterbox);
+    }
     // 计算耗时
     const auto preprocess_end = std::chrono::steady_clock::now();
     result.preprocess_ms = std::chrono::duration<double, std::milli>(

@@ -15,6 +15,7 @@ SAMPLE_DATA_DIR = DASHBOARD_ROOT / "sample_data"
 class DashboardDefaults:
     adb_local_port: int = 18080
     gateway_port: int = 8080
+    board_runtime_dir: str = "/userdata/aicam"
     board_log_dir: str = "/userdata/aicam/logs"
     adb_video_url: str = "http://127.0.0.1:18080/"
     lan_video_url: str = "http://192.168.1.88:8080/"

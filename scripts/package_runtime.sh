@@ -6,9 +6,17 @@ BUILD_DIR="${AICAM_BUILD_DIR:-$ROOT_DIR/build-aicam-check}"
 DIST_DIR="${AICAM_DIST_DIR:-$ROOT_DIR/dist-aicam}"
 SDK_ROOT="${SDK_ROOT:-}"
 RKNN_RT_LIB="${AICAM_RKNNRT_LIB:-}"
+RKAIQ_LIB="${AICAM_RKAIQ_LIB:-}"
+RGA_LIB="${AICAM_RGA_LIB:-}"
 
 if [[ -z "$RKNN_RT_LIB" && -n "$SDK_ROOT" ]]; then
   RKNN_RT_LIB="$SDK_ROOT/output/out/media_out/lib/librknnrt.so"
+fi
+if [[ -z "$RKAIQ_LIB" && -n "$SDK_ROOT" ]]; then
+  RKAIQ_LIB="$SDK_ROOT/output/out/media_out/lib/librkaiq.so"
+fi
+if [[ -z "$RGA_LIB" && -n "$SDK_ROOT" ]]; then
+  RGA_LIB="$SDK_ROOT/output/out/media_out/lib/librga.so"
 fi
 DEFAULT_MODEL_CANDIDATES=(
   "$ROOT_DIR/models/yolov5n_fp.rknn"
@@ -46,6 +54,18 @@ if [[ -n "$RKNN_RT_LIB" && -f "$RKNN_RT_LIB" ]]; then
   cp -f "$RKNN_RT_LIB" "$DIST_DIR/librknnrt.so"
 else
   echo "Warning: RKNN runtime library not found. Set AICAM_RKNNRT_LIB or SDK_ROOT before packaging." >&2
+fi
+
+if [[ -n "$RKAIQ_LIB" && -f "$RKAIQ_LIB" ]]; then
+  cp -f "$RKAIQ_LIB" "$DIST_DIR/librkaiq.so"
+else
+  echo "Warning: RKAIQ runtime library not found. Set AICAM_RKAIQ_LIB or SDK_ROOT before packaging." >&2
+fi
+
+if [[ -n "$RGA_LIB" && -f "$RGA_LIB" ]]; then
+  cp -f "$RGA_LIB" "$DIST_DIR/librga.so"
+else
+  echo "Warning: RGA runtime library not found. Set AICAM_RGA_LIB or SDK_ROOT before packaging." >&2
 fi
 
 for model_path in "${DEFAULT_MODEL_CANDIDATES[@]}"; do

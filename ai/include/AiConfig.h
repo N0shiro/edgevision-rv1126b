@@ -14,7 +14,9 @@ struct AiConfig {
     // NMS 阈值，用于合并高度重叠的检测框。
     float nms_threshold = 0.45f;
     // 每隔多少帧做一次 AI 推理，数值越大 CPU/NPU 压力越小但检测更新越慢。
-    int infer_every_n_frames = 5;
+    int infer_every_n_frames = 7;
+    // 预处理后端：rga 优先使用 Rockchip RGA，cpu 使用纯 CPU 路径。
+    std::string preprocess_backend = "rga";
     // 单帧最多保留的检测结果数量。
     int max_results = 20;
     // 模型输出是否包含 objectness 分支，常见 YOLO 模型需要开启。

@@ -48,9 +48,9 @@ CameraDevice::CameraDevice(std::string device_path, int requested_width, int req
     std::cout << "CameraDevice 初始化 " << std::endl;
     
     // 1. 切换到 ISP 输出节点
-    fd = open(device_path.c_str(), O_RDWR);
+    fd = open(this->device_path.c_str(), O_RDWR);
     if (fd < 0) {
-        std::cerr << "摄像头打开失败: " << device_path
+        std::cerr << "摄像头打开失败: " << this->device_path
                   << "。请检查设备节点和 root 权限。" << std::endl;
         perror("error");
         exit(EXIT_FAILURE);

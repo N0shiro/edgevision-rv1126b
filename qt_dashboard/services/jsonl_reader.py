@@ -69,6 +69,15 @@ class JsonlTail:
         return objects
 
 
+def _to_int(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def flatten_detection_events(items: Iterable[Dict[str, Any]]) -> List[DetectionEvent]:
     records: List[DetectionEvent] = []
     for item in items:
@@ -82,9 +91,9 @@ def flatten_detection_events(items: Iterable[Dict[str, Any]]) -> List[DetectionE
             records.append(
                 DetectionEvent(
                     timestamp=str(item.get("timestamp", "")),
-                    frame_sequence=int(item.get("frame_sequence", 0) or 0),
+                    frame_sequence=_to_int(item.get("frame_sequence"), 0),
                     label=str(detection.get("label", "")),
-                    class_id=int(detection.get("class_id", -1) or -1),
+                    class_id=_to_int(detection.get("class_id"), -1),
                     score=float(detection.get("score", 0.0) or 0.0),
                     x1=float(detection.get("x1", 0.0) or 0.0),
                     y1=float(detection.get("y1", 0.0) or 0.0),
@@ -110,9 +119,9 @@ def parse_metrics_samples(items: Iterable[Dict[str, Any]]) -> List[MetricsSample
                 average_inference_ms=float(item.get("average_inference_ms", 0.0) or 0.0),
                 cpu_percent=float(item.get("cpu_percent", 0.0) or 0.0),
                 rss_mb=float(item.get("rss_mb", 0.0) or 0.0),
-                bytes_sent=int(item.get("bytes_sent", 0) or 0),
-                encode_queue_drops=int(item.get("encode_queue_drops", 0) or 0),
-                ai_queue_drops=int(item.get("ai_queue_drops", 0) or 0),
+                bytes_sent=_to_int(item.get("bytes_sent"), 0),
+                encode_queue_drops=_to_int(item.get("encode_queue_drops"), 0),
+                ai_queue_drops=_to_int(item.get("ai_queue_drops"), 0),
             )
         )
     return samples

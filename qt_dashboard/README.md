@@ -4,7 +4,7 @@ PySide6 desktop dashboard for the RV1126B AICAM runtime.
 
 ## Features
 
-- ADB USB mode with automatic `adb forward tcp:18080 tcp:8080`
+- ADB USB mode with one-click board runtime start and automatic `adb forward tcp:18080 tcp:8080`
 - LAN URL mode for direct `http://<board-ip>:8080/` playback
 - Offline log mode for local `events.jsonl` and `metrics.jsonl`
 - Real-time video display through OpenCV
@@ -19,10 +19,24 @@ This keeps the edge-side runtime lightweight and makes offline demos easy.
 ## Install
 
 ```powershell
-cd D:\2601\mycode\edgevision-rv1126b\qt_dashboard
+cd <repo-root>\qt_dashboard
 python -m venv .venv
 .\.venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+If PowerShell blocks activation scripts, run this once in the current shell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\activate
+```
+
+`adb` must be available in `PATH`. If not, set:
+
+```powershell
+$env:AICAM_ADB = "C:\path\to\adb.exe"
 ```
 
 ## Run
@@ -33,18 +47,24 @@ python main.py
 
 ## ADB USB Mode
 
-1. Start the board runtime.
+1. Deploy the runtime package to `/userdata/aicam` on the board.
 2. Connect the board to the PC with USB.
 3. Confirm `adb devices` shows one online device.
 4. Open the dashboard.
 5. Select `ADB USB`.
-6. Click `ADB Connect`.
-7. Click `Start`.
+6. Keep `Board runtime` as `/userdata/aicam`, unless you deployed elsewhere.
+7. Click `Start Runtime`.
 
 The dashboard maps:
 
 ```text
 PC 127.0.0.1:18080 -> board 127.0.0.1:8080
+```
+
+It starts the board process with:
+
+```text
+cd /userdata/aicam && bash ./start_aicam.sh > logs/startup.out 2>&1
 ```
 
 It also pulls:
@@ -59,6 +79,8 @@ to:
 ```text
 qt_dashboard/runtime/logs/
 ```
+
+Click `Stop Runtime` to stop the local dashboard workers and kill board-side `camera` / `camera_gateway`.
 
 ## LAN URL Mode
 

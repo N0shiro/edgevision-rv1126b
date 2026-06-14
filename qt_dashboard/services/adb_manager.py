@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -16,6 +18,7 @@ class AdbDevice:
 class AdbManager:
     def __init__(self, adb_path: Optional[str] = None) -> None:
         self.adb_path = adb_path or os.environ.get("AICAM_ADB", "adb")
+        self.runtime_process: Optional[subprocess.Popen] = None
 
     def run(self, args: Iterable[str], timeout: float = 8.0) -> Tuple[int, str, str]:
         command = [self.adb_path, *args]
@@ -69,6 +72,57 @@ class AdbManager:
         code, stdout, stderr = self.run(args, timeout=6.0)
         if code != 0:
             raise RuntimeError(stderr or stdout or "adb forward failed")
+
+    def shell(self, command: str, serial: Optional[str] = None, timeout: float = 8.0) -> Tuple[int, str, str]:
+        args = []
+        if serial:
+            args.extend(["-s", serial])
+        args.extend(["shell", command])
+        return self.run(args, timeout=timeout)
+
+    def start_board_runtime(self, runtime_dir: str, serial: Optional[str] = None) -> None:
+        if self.runtime_process is not None and self.runtime_process.poll() is None:
+            return
+
+        quoted_dir = shlex.quote(runtime_dir.rstrip("/") or "/userdata/aicam")
+        command = (
+            f"cd {quoted_dir} && "
+            "mkdir -p logs && "
+            "chmod +x camera camera_gateway start_aicam.sh && "
+            "bash ./start_aicam.sh > logs/startup.out 2>&1"
+        )
+        args = []
+        if serial:
+            args.extend(["-s", serial])
+        args.extend(["shell", command])
+
+        try:
+            self.runtime_process = subprocess.Popen(
+                [self.adb_path, *args],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"adb not found: {self.adb_path}") from exc
+
+        time.sleep(0.5)
+        if self.runtime_process.poll() is not None:
+            self.runtime_process = None
+            raise RuntimeError("board runtime process exited immediately")
+
+    def stop_board_runtime(self, serial: Optional[str] = None) -> None:
+        command = "killall camera camera_gateway 2>/dev/null || true"
+        code, stdout, stderr = self.shell(command, serial=serial, timeout=6.0)
+        if self.runtime_process is not None and self.runtime_process.poll() is None:
+            self.runtime_process.terminate()
+            try:
+                self.runtime_process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                self.runtime_process.kill()
+        self.runtime_process = None
+        if code != 0:
+            raise RuntimeError(stderr or stdout or "board runtime stop failed")
 
     def pull_file(self, remote_path: str, local_path: Path, serial: Optional[str] = None) -> bool:
         local_path.parent.mkdir(parents=True, exist_ok=True)

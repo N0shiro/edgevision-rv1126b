@@ -169,14 +169,63 @@ http://<board-ip>:8080/
 
 ## PyQt 上位机
 
-阶段 2 新增 `qt_dashboard/` 上位机 MVP，支持 `ADB USB`、局域网和离线日志三种模式：
+`qt_dashboard/` 提供桌面端调试界面，支持 `ADB USB`、局域网和离线日志三种模式：
 
-- `ADB USB`：自动执行 `adb forward tcp:18080 tcp:8080`，并定时拉取板端 `events.jsonl` / `metrics.jsonl`
+- `ADB USB`：一键启动板端 `/userdata/aicam/start_aicam.sh`，自动执行 `adb forward tcp:18080 tcp:8080`，并定时拉取板端 `events.jsonl` / `metrics.jsonl`
 - 局域网：直接连接 `http://<board-ip>:8080/`
 - 离线日志：读取本地 JSONL 文件用于无开发板演示
 - 界面展示实时视频、检测事件表、类别数量统计、FPS/CPU/内存/推理耗时曲线，并支持 CSV 导出
 
-运行方式：
+### Windows 端依赖配置
+
+建议在 Windows 端运行 GUI，因为当前 Linux 虚拟机环境不一定包含 Qt 图形栈。前置条件：
+
+- Windows 已安装 `Python 3.10+`
+- 已安装 Rockchip/Android `adb`，并且 `adb devices` 能看到开发板
+- 板端已经部署运行包到 `/userdata/aicam`，目录内至少包含 `camera`、`camera_gateway`、`start_aicam.sh`、`config/`、`models/`
+- 如果 `adb` 不在 `PATH`，可设置环境变量 `AICAM_ADB` 指向 `adb.exe`
+
+PowerShell 运行方式：
+
+```powershell
+cd <repo-root>\qt_dashboard
+python -m venv .venv
+.\.venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python main.py
+```
+
+如果 Windows 禁止激活脚本，可在当前 PowerShell 中临时执行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\activate
+```
+
+### GUI 启动要点
+
+1. 连接开发板 USB，确认：
+
+```powershell
+adb devices
+```
+
+2. 打开 GUI 后选择 `ADB USB`。
+3. `Board runtime` 默认保持 `/userdata/aicam`。
+4. 点击 `Start Runtime`。
+5. GUI 会自动完成：
+
+```text
+adb shell "cd /userdata/aicam && bash ./start_aicam.sh ..."
+adb forward tcp:18080 tcp:8080
+打开 http://127.0.0.1:18080/
+定时拉取 /userdata/aicam/logs/events.jsonl 和 metrics.jsonl
+```
+
+6. 点击 `Stop Runtime` 会停止本地视频/日志线程，并通过 ADB 停止板端 `camera` 和 `camera_gateway`。
+
+Linux 桌面环境也可以运行：
 
 ```bash
 cd qt_dashboard
@@ -184,12 +233,6 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python main.py
-```
-
-Windows PowerShell 下激活虚拟环境：
-
-```powershell
-.\.venv\Scripts\activate
 ```
 
 ## 文档
@@ -206,6 +249,6 @@ Windows PowerShell 下激活虚拟环境：
 ## 已知限制
 
 - 当前网关输出仍为 `HTTP + 裸 H.264`
-- 摄像头设备、输入分辨率、码率和 GOP 已支持通过环境变量配置，默认仍为 `/dev/video13`、`1920x1080`、`4096 kbps`
+- 摄像头设备、输入分辨率、码率和 GOP 已支持通过环境变量配置，默认仍为 `/dev/video13`、`1920x1080`、`8192 kbps`
 - RKNN 后处理目前优先面向 YOLO 风格检测输出，不覆盖所有模型
 - 当前尚未实现截图留存和 Web 展示层

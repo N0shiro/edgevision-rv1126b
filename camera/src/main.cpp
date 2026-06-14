@@ -57,7 +57,7 @@ int main() {
     }
 
     // 控制并启动aiq/isp模块
-    IspController isp(config.sensor_id, config.fps, config.iq_dir);
+    IspController isp(config.sensor_id, config.fps, config.iq_dir, config.btnr_strength);
     if (!isp.start()) {
         std::cerr << "AIQ 未能启动，继续使用当前 ISP 状态。" << std::endl;
     }

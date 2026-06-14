@@ -70,13 +70,14 @@ class DashboardWindow(QMainWindow):
         self.url_edit = QLineEdit(self.defaults.adb_video_url)
         self.local_events_edit = QLineEdit(str(self.defaults.local_events_path))
         self.local_metrics_edit = QLineEdit(str(self.defaults.local_metrics_path))
+        self.board_runtime_dir_edit = QLineEdit(self.defaults.board_runtime_dir)
         self.remote_log_dir_edit = QLineEdit(self.defaults.board_log_dir)
 
         self.adb_button = QPushButton("ADB Connect")
         self.adb_button.clicked.connect(self.connect_adb)
-        self.start_button = QPushButton("Start")
+        self.start_button = QPushButton("Start Runtime")
         self.start_button.clicked.connect(self.start_all)
-        self.stop_button = QPushButton("Stop")
+        self.stop_button = QPushButton("Stop Runtime")
         self.stop_button.clicked.connect(self.stop_all)
         self.pull_button = QPushButton("Pull Logs")
         self.pull_button.clicked.connect(self.pull_logs_once)
@@ -125,6 +126,7 @@ class DashboardWindow(QMainWindow):
         connection_form = QFormLayout(connection_box)
         connection_form.addRow("Mode", self.mode_combo)
         connection_form.addRow("Video URL", self.url_edit)
+        connection_form.addRow("Board runtime", self.board_runtime_dir_edit)
         connection_form.addRow("Board logs", self.remote_log_dir_edit)
         connection_form.addRow(self.adb_button, self.pull_button)
         connection_form.addRow(self.start_button, self.stop_button)
@@ -148,7 +150,7 @@ class DashboardWindow(QMainWindow):
         logs_form.addRow(self.export_button, self.clear_button)
 
         hint = QLabel(
-            "ADB mode maps board :8080 to local :18080 and pulls JSONL logs. "
+            "ADB mode starts the board runtime, maps board :8080 to local :18080, and pulls JSONL logs. "
             "LAN mode reads video directly. Offline mode only reads local logs."
         )
         hint.setWordWrap(True)
@@ -264,12 +266,22 @@ class DashboardWindow(QMainWindow):
         self._set_status(f"pulled logs: events={events_ok} metrics={metrics_ok}")
 
     def start_all(self) -> None:
-        self.stop_all()
+        self.stop_local_workers()
         mode = self.mode_combo.currentText()
         if mode == "ADB USB" and self.adb_serial is None:
             self.connect_adb()
             if self.adb_serial is None:
                 return
+        if mode == "ADB USB":
+            try:
+                self.adb_manager.start_board_runtime(
+                    self.board_runtime_dir_edit.text().strip() or self.defaults.board_runtime_dir,
+                    serial=self.adb_serial,
+                )
+            except RuntimeError as exc:
+                self._show_error("Board runtime start failed", str(exc))
+                return
+            self._set_status("board runtime starting")
 
         if mode != "Offline Logs":
             self.video_worker = VideoWorker(self.url_edit.text().strip())
@@ -291,13 +303,22 @@ class DashboardWindow(QMainWindow):
         self.log_watcher.start()
         self._set_status(f"started in {mode} mode")
 
-    def stop_all(self) -> None:
+    def stop_local_workers(self) -> None:
         if self.video_worker is not None:
             self.video_worker.stop()
             self.video_worker = None
         if self.log_watcher is not None:
             self.log_watcher.stop()
             self.log_watcher = None
+
+    def stop_all(self) -> None:
+        self.stop_local_workers()
+        if self.mode_combo.currentText() == "ADB USB" and self.adb_serial is not None:
+            try:
+                self.adb_manager.stop_board_runtime(serial=self.adb_serial)
+            except RuntimeError as exc:
+                self._set_status(str(exc))
+                return
         self._set_status("stopped")
 
     def clear_view(self) -> None:

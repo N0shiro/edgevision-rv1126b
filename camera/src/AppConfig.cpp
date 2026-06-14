@@ -51,6 +51,7 @@ AppConfig AppConfig::fromEnvironment() {
     config.sensor_id = readIntEnv("AICAM_SENSOR_ID", config.sensor_id);
     config.fps = readIntEnv("AICAM_FPS", config.fps);
     config.iq_dir = readStringEnv("AICAM_IQ_DIR", config.iq_dir);
+    config.btnr_strength = readFloatEnv("AICAM_BTNR_STRENGTH", config.btnr_strength);
     config.video_device = readStringEnv("AICAM_VIDEO_DEVICE", config.video_device);
     config.video_width = readIntEnv("AICAM_WIDTH", config.video_width);
     config.video_height = readIntEnv("AICAM_HEIGHT", config.video_height);
@@ -76,6 +77,7 @@ AppConfig AppConfig::fromEnvironment() {
     config.ai.score_threshold = readFloatEnv("AICAM_SCORE_THRESHOLD", config.ai.score_threshold);
     config.ai.nms_threshold = readFloatEnv("AICAM_NMS_THRESHOLD", config.ai.nms_threshold);
     config.ai.infer_every_n_frames = readIntEnv("AICAM_INFER_EVERY_N", config.ai.infer_every_n_frames);
+    config.ai.preprocess_backend = readStringEnv("AICAM_PREPROCESS_BACKEND", config.ai.preprocess_backend);
     config.ai.max_results = readIntEnv("AICAM_MAX_RESULTS", config.ai.max_results);
     config.ai.has_objectness = readBoolEnv("AICAM_HAS_OBJECTNESS", config.ai.has_objectness);
     config.ai.box_format = readStringEnv("AICAM_BOX_FORMAT", config.ai.box_format);
@@ -97,8 +99,11 @@ AppConfig AppConfig::fromEnvironment() {
     if (config.video_height <= 0) {
         config.video_height = 1080;
     }
+    if (config.btnr_strength > 1.0f) {
+        config.btnr_strength = 1.0f;
+    }
     if (config.bitrate_kbps <= 0) {
-        config.bitrate_kbps = 4096;
+        config.bitrate_kbps = 8192;
     }
     if (config.gop <= 0) {
         config.gop = config.fps;
@@ -121,6 +126,9 @@ AppConfig AppConfig::fromEnvironment() {
     if (config.ai.infer_every_n_frames <= 0) {
         config.ai.infer_every_n_frames = 1;
     }
+    if (config.ai.preprocess_backend != "rga" && config.ai.preprocess_backend != "cpu") {
+        config.ai.preprocess_backend = "rga";
+    }
 
     return config;
 }
@@ -130,6 +138,7 @@ void AppConfig::printSummary() const {
     std::cout << "sensor_id=" << sensor_id
               << " fps=" << fps
               << " iq_dir=" << iq_dir
+              << " btnr_strength=" << btnr_strength
               << std::endl;
     std::cout << "video_device=" << video_device
               << " resolution=" << video_width << 'x' << video_height
@@ -144,6 +153,7 @@ void AppConfig::printSummary() const {
               << " model=" << (ai.model_path.empty() ? "<unset>" : ai.model_path)
               << " labels=" << (ai.labels_path.empty() ? "<unset>" : ai.labels_path)
               << " infer_every_n=" << ai.infer_every_n_frames
+              << " preprocess=" << ai.preprocess_backend
               << std::endl;
     std::cout << "event_jsonl=" << event_jsonl_path
               << " metrics_jsonl=" << metrics_jsonl_path

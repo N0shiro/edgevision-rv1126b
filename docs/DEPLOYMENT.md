@@ -86,12 +86,14 @@ export AICAM_VIDEO_DEVICE=/dev/video13
 export AICAM_WIDTH=1920
 export AICAM_HEIGHT=1080
 export AICAM_FPS=30
-export AICAM_BITRATE_KBPS=4096
+export AICAM_BITRATE_KBPS=8192
 export AICAM_GOP=30
+export AICAM_BTNR_STRENGTH=0.25
 export AICAM_RKNN_MODEL=/userdata/aicam/models/yolov5n_fp.rknn
 export AICAM_LABELS=/userdata/aicam/models/coco_80_labels.txt
 export AICAM_AI_ENABLE=1
-export AICAM_INFER_EVERY_N=10
+export AICAM_INFER_EVERY_N=7
+export AICAM_PREPROCESS_BACKEND=rga
 export AICAM_EVENT_JSONL=/userdata/aicam/logs/events.jsonl
 export AICAM_METRICS_JSONL=/userdata/aicam/logs/metrics.jsonl
 ```

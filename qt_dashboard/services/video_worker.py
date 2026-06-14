@@ -28,9 +28,19 @@ class VideoWorker(QThread):
 
         self._running = True
         self.status_changed.emit(f"opening video: {self.url}")
-        capture = cv2.VideoCapture(self.url)
-        if not capture.isOpened():
-            self.status_changed.emit("video open failed")
+        capture = None
+        open_attempts = 0
+        while self._running:
+            capture = cv2.VideoCapture(self.url)
+            if capture.isOpened():
+                break
+            capture.release()
+            open_attempts += 1
+            if open_attempts == 1 or open_attempts % 10 == 0:
+                self.status_changed.emit("waiting for video endpoint")
+            time.sleep(0.5)
+
+        if not self._running or capture is None:
             return
 
         self.status_changed.emit("video connected")
