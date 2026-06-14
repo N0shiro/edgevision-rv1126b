@@ -33,16 +33,16 @@ class AdbManager:
                 check=False,
             )
         except FileNotFoundError:
-            return 127, "", f"adb not found: {self.adb_path}"
+            return 127, "", f"未找到 adb：{self.adb_path}"
         except subprocess.TimeoutExpired:
-            return 124, "", "adb command timed out"
+            return 124, "", "adb 命令超时"
 
         return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
 
     def devices(self) -> List[AdbDevice]:
         code, stdout, stderr = self.run(["devices"], timeout=6.0)
         if code != 0:
-            raise RuntimeError(stderr or stdout or "adb devices failed")
+            raise RuntimeError(stderr or stdout or "adb devices 执行失败")
 
         devices: List[AdbDevice] = []
         for line in stdout.splitlines()[1:]:
@@ -61,8 +61,8 @@ class AdbManager:
                 return device
         if devices:
             states = ", ".join(f"{item.serial}:{item.state}" for item in devices)
-            raise RuntimeError(f"no online adb device ({states})")
-        raise RuntimeError("no adb device detected")
+            raise RuntimeError(f"没有在线 ADB 设备（{states}）")
+        raise RuntimeError("未检测到 ADB 设备")
 
     def forward(self, local_port: int, remote_port: int, serial: Optional[str] = None) -> None:
         args = []
@@ -71,7 +71,7 @@ class AdbManager:
         args.extend(["forward", f"tcp:{local_port}", f"tcp:{remote_port}"])
         code, stdout, stderr = self.run(args, timeout=6.0)
         if code != 0:
-            raise RuntimeError(stderr or stdout or "adb forward failed")
+            raise RuntimeError(stderr or stdout or "adb forward 执行失败")
 
     def shell(self, command: str, serial: Optional[str] = None, timeout: float = 8.0) -> Tuple[int, str, str]:
         args = []
@@ -104,12 +104,12 @@ class AdbManager:
                 text=True,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(f"adb not found: {self.adb_path}") from exc
+            raise RuntimeError(f"未找到 adb：{self.adb_path}") from exc
 
         time.sleep(0.5)
         if self.runtime_process.poll() is not None:
             self.runtime_process = None
-            raise RuntimeError("board runtime process exited immediately")
+            raise RuntimeError("板端运行进程立即退出")
 
     def stop_board_runtime(self, serial: Optional[str] = None) -> None:
         command = "killall camera camera_gateway 2>/dev/null || true"
@@ -122,7 +122,7 @@ class AdbManager:
                 self.runtime_process.kill()
         self.runtime_process = None
         if code != 0:
-            raise RuntimeError(stderr or stdout or "board runtime stop failed")
+            raise RuntimeError(stderr or stdout or "停止板端运行进程失败")
 
     def pull_file(self, remote_path: str, local_path: Path, serial: Optional[str] = None) -> bool:
         local_path.parent.mkdir(parents=True, exist_ok=True)

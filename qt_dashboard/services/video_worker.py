@@ -23,11 +23,11 @@ class VideoWorker(QThread):
         try:
             import cv2
         except ImportError:
-            self.status_changed.emit("opencv-python is not installed")
+            self.status_changed.emit("未安装 opencv-python")
             return
 
         self._running = True
-        self.status_changed.emit(f"opening video: {self.url}")
+        self.status_changed.emit(f"正在打开视频流：{self.url}")
         capture = None
         open_attempts = 0
         while self._running:
@@ -37,20 +37,20 @@ class VideoWorker(QThread):
             capture.release()
             open_attempts += 1
             if open_attempts == 1 or open_attempts % 10 == 0:
-                self.status_changed.emit("waiting for video endpoint")
+                self.status_changed.emit("等待视频端点响应")
             time.sleep(0.5)
 
         if not self._running or capture is None:
             return
 
-        self.status_changed.emit("video connected")
+        self.status_changed.emit("视频流已连接")
         failed_reads = 0
         while self._running:
             ok, frame = capture.read()
             if not ok or frame is None:
                 failed_reads += 1
                 if failed_reads >= 30:
-                    self.status_changed.emit("waiting for video frames")
+                    self.status_changed.emit("等待视频帧")
                     failed_reads = 0
                 time.sleep(0.05)
                 continue
@@ -69,4 +69,4 @@ class VideoWorker(QThread):
             self.frame_ready.emit(image)
 
         capture.release()
-        self.status_changed.emit("video stopped")
+        self.status_changed.emit("视频流已停止")

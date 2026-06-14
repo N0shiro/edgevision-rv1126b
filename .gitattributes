@@ -1,0 +1,1 @@
+qt_dashboard/dist/*.exe filter=lfs diff=lfs merge=lfs -text

@@ -14,7 +14,7 @@ class EventTable(QWidget):
         self.max_rows = max_rows
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["Time", "Frame", "Label", "Score", "Infer ms", "Box", "Backend"]
+            ["时间", "帧号", "类别", "置信度", "推理 ms", "检测框", "后端"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)

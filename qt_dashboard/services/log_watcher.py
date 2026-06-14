@@ -50,7 +50,7 @@ class LogWatcher(QThread):
 
     def run(self) -> None:
         self._running = True
-        self.status_changed.emit("log watcher started")
+        self.status_changed.emit("日志监听已启动")
 
         while self._running:
             if self.use_adb_pull:
@@ -75,4 +75,4 @@ class LogWatcher(QThread):
 
             self.msleep(self.poll_interval_ms)
 
-        self.status_changed.emit("log watcher stopped")
+        self.status_changed.emit("日志监听已停止")
