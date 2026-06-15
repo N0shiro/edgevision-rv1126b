@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,21 +20,59 @@ class AdbDevice:
 
 class AdbManager:
     def __init__(self, adb_path: Optional[str] = None) -> None:
-        self.adb_path = adb_path or os.environ.get("AICAM_ADB", "adb")
+        self.adb_path = self._resolve_adb_path(adb_path)
         self.runtime_process: Optional[subprocess.Popen] = None
+        self._run_lock = threading.Lock()
+
+    def _resolve_adb_path(self, adb_path: Optional[str]) -> str:
+        configured_path = adb_path or os.environ.get("AICAM_ADB")
+        if configured_path:
+            return configured_path
+
+        path_adb = shutil.which("adb")
+        if path_adb:
+            return path_adb
+
+        candidates = [
+            Path(sys.executable).resolve().parent / "adb.exe",
+            Path(os.environ.get("ANDROID_HOME", "")) / "platform-tools" / "adb.exe",
+            Path(os.environ.get("ANDROID_SDK_ROOT", "")) / "platform-tools" / "adb.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk" / "platform-tools" / "adb.exe",
+            Path(os.environ.get("ProgramFiles", "")) / "Android" / "Sdk" / "platform-tools" / "adb.exe",
+            Path(os.environ.get("ProgramFiles(x86)", "")) / "Android" / "android-sdk" / "platform-tools" / "adb.exe",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+
+        return "adb"
+
+    def _hidden_subprocess_options(self) -> dict:
+        if os.name != "nt":
+            return {}
+
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return {
+            "startupinfo": startupinfo,
+            "creationflags": subprocess.CREATE_NO_WINDOW,
+        }
 
     def run(self, args: Iterable[str], timeout: float = 8.0) -> Tuple[int, str, str]:
         command = [self.adb_path, *args]
         try:
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-                check=False,
-            )
+            with self._run_lock:
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                    check=False,
+                    **self._hidden_subprocess_options(),
+                )
         except FileNotFoundError:
             return 127, "", f"未找到 adb：{self.adb_path}"
         except subprocess.TimeoutExpired:
@@ -102,6 +143,7 @@ class AdbManager:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 text=True,
+                **self._hidden_subprocess_options(),
             )
         except FileNotFoundError as exc:
             raise RuntimeError(f"未找到 adb：{self.adb_path}") from exc
@@ -124,13 +166,19 @@ class AdbManager:
         if code != 0:
             raise RuntimeError(stderr or stdout or "停止板端运行进程失败")
 
-    def pull_file(self, remote_path: str, local_path: Path, serial: Optional[str] = None) -> bool:
+    def pull_file(
+        self,
+        remote_path: str,
+        local_path: Path,
+        serial: Optional[str] = None,
+        timeout: float = 4.0,
+    ) -> bool:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         args = []
         if serial:
             args.extend(["-s", serial])
         args.extend(["pull", remote_path, str(local_path)])
-        code, _stdout, _stderr = self.run(args, timeout=12.0)
+        code, _stdout, _stderr = self.run(args, timeout=timeout)
         return code == 0 and local_path.exists()
 
     def pull_logs(
@@ -138,15 +186,18 @@ class AdbManager:
         remote_log_dir: str,
         local_log_dir: Path,
         serial: Optional[str] = None,
+        timeout: float = 4.0,
     ) -> Tuple[bool, bool]:
         events_ok = self.pull_file(
             f"{remote_log_dir.rstrip('/')}/events.jsonl",
             local_log_dir / "events.jsonl",
             serial=serial,
+            timeout=timeout,
         )
         metrics_ok = self.pull_file(
             f"{remote_log_dir.rstrip('/')}/metrics.jsonl",
             local_log_dir / "metrics.jsonl",
             serial=serial,
+            timeout=timeout,
         )
         return events_ok, metrics_ok

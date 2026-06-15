@@ -3,12 +3,12 @@ from __future__ import annotations
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -40,6 +40,25 @@ from qt_dashboard.widgets.summary_panel import SummaryPanel
 from qt_dashboard.widgets.video_panel import VideoPanel
 
 
+class AdbTask(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, task: Callable[[], Any], parent=None) -> None:
+        super().__init__(parent)
+        self.task = task
+
+    def run(self) -> None:
+        try:
+            result = self.task()
+        except RuntimeError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.succeeded.emit(result)
+
+
 class DashboardWindow(QMainWindow):
     MODE_ADB = "adb"
     MODE_LAN = "lan"
@@ -52,6 +71,8 @@ class DashboardWindow(QMainWindow):
         self.defaults = DashboardDefaults()
         self.adb_manager = AdbManager()
         self.adb_serial: Optional[str] = None
+        self.adb_task: Optional[AdbTask] = None
+        self._adb_busy = False
         self.video_worker: Optional[VideoWorker] = None
         self.log_watcher: Optional[LogWatcher] = None
         self.events: List[DetectionEvent] = []
@@ -61,9 +82,14 @@ class DashboardWindow(QMainWindow):
         self.resize(1440, 900)
         self._build_ui()
         self._apply_style()
-        self.refresh_adb_devices(show_status=False)
+        self._update_control_state()
+        QTimer.singleShot(0, lambda: self.refresh_adb_devices(show_status=False))
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self.adb_task is not None and self.adb_task.isRunning():
+            event.ignore()
+            self._set_status("ADB 操作正在执行，请稍候再关闭")
+            return
         self.stop_all()
         super().closeEvent(event)
 
@@ -346,16 +372,28 @@ class DashboardWindow(QMainWindow):
             self.url_edit.setText(self.defaults.adb_video_url)
         elif mode_key == self.MODE_LAN:
             self.url_edit.setText(self.defaults.lan_video_url)
+        self._update_control_state()
+
+    def _update_control_state(self) -> None:
+        mode_key = self._current_mode()
         is_adb = mode_key == self.MODE_ADB
         is_offline = mode_key == self.MODE_OFFLINE
-        self.adb_button.setEnabled(is_adb)
-        self.pull_button.setEnabled(is_adb)
-        self.adb_device_combo.setEnabled(is_adb)
-        self.refresh_adb_button.setEnabled(is_adb)
-        self.board_runtime_dir_edit.setEnabled(is_adb)
-        self.remote_log_dir_edit.setEnabled(is_adb)
-        self.url_edit.setEnabled(not is_offline)
+        can_run_adb = is_adb and not self._adb_busy
+        can_run = not self._adb_busy
+        self.adb_button.setEnabled(can_run_adb)
+        self.pull_button.setEnabled(can_run_adb)
+        self.adb_device_combo.setEnabled(can_run_adb)
+        self.refresh_adb_button.setEnabled(can_run_adb)
+        self.board_runtime_dir_edit.setEnabled(can_run_adb)
+        self.remote_log_dir_edit.setEnabled(can_run_adb)
+        self.start_button.setEnabled(can_run)
+        self.stop_button.setEnabled(can_run)
+        self.url_edit.setEnabled(not is_offline and can_run)
         self.url_edit.setReadOnly(mode_key != self.MODE_LAN)
+
+    def _set_adb_busy(self, busy: bool) -> None:
+        self._adb_busy = busy
+        self._update_control_state()
 
     def _current_mode(self) -> str:
         return str(self.mode_combo.currentData() or self.MODE_ADB)
@@ -366,17 +404,77 @@ class DashboardWindow(QMainWindow):
             return str(serial)
         return None
 
-    def refresh_adb_devices(self, show_status: bool = True) -> None:
-        current_serial = self.adb_serial or self._selected_adb_serial()
-        self.adb_device_combo.clear()
-        try:
-            devices = self.adb_manager.devices()
-        except RuntimeError as exc:
-            self.adb_device_combo.addItem("未检测到设备", "")
-            if show_status:
-                self._set_status(f"ADB 设备刷新失败：{exc}")
+    def _run_adb_task(
+        self,
+        status_text: str,
+        task: Callable[[], Any],
+        on_success: Callable[[Any], None],
+        error_title: str,
+        show_error: bool = True,
+    ) -> None:
+        if self.adb_task is not None and self.adb_task.isRunning():
+            self._set_status("ADB 操作正在执行，请稍候")
             return
 
+        self._set_status(status_text)
+        self._set_adb_busy(True)
+        worker = AdbTask(task, self)
+        self.adb_task = worker
+        worker.succeeded.connect(lambda result: self._finish_adb_task(result, on_success))
+        worker.failed.connect(lambda message: self._fail_adb_task(error_title, message, show_error))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _finish_adb_task(self, result: Any, on_success: Callable[[Any], None]) -> None:
+        self.adb_task = None
+        self._set_adb_busy(False)
+        on_success(result)
+
+    def _fail_adb_task(self, title: str, message: str, show_error: bool) -> None:
+        self.adb_task = None
+        self._set_adb_busy(False)
+        if title == "ADB 设备刷新失败":
+            self.adb_device_combo.clear()
+            self.adb_device_combo.addItem("未检测到设备", "")
+        if show_error:
+            self._show_error(title, message)
+        else:
+            self._set_status(message)
+
+    def _connect_adb_blocking(self, selected_serial: Optional[str]) -> str:
+        if selected_serial is None:
+            device = self.adb_manager.first_online_device()
+            selected_serial = device.serial
+        else:
+            states = {device.serial: device.state for device in self.adb_manager.devices()}
+            state = states.get(selected_serial)
+            if state != "device":
+                raise RuntimeError(f"ADB 设备未在线：{selected_serial}（{state or '未知'}）")
+
+        self.adb_manager.forward(
+            self.defaults.adb_local_port,
+            self.defaults.gateway_port,
+            serial=selected_serial,
+        )
+        return selected_serial
+
+    def refresh_adb_devices(self, show_status: bool = True) -> None:
+        current_serial = self.adb_serial or self._selected_adb_serial()
+        self._run_adb_task(
+            "正在刷新 ADB 设备",
+            self.adb_manager.devices,
+            lambda devices: self._populate_adb_devices(devices, current_serial, show_status),
+            "ADB 设备刷新失败",
+            show_error=show_status,
+        )
+
+    def _populate_adb_devices(
+        self,
+        devices: List,
+        current_serial: Optional[str],
+        show_status: bool = True,
+    ) -> None:
+        self.adb_device_combo.clear()
         if not devices:
             self.adb_device_combo.addItem("未检测到设备", "")
             if show_status:
@@ -414,25 +512,15 @@ class DashboardWindow(QMainWindow):
             self._set_status(f"已刷新 ADB 设备：{len(devices)} 个")
 
     def connect_adb(self) -> None:
-        try:
-            selected_serial = self._selected_adb_serial()
-            if selected_serial is None:
-                device = self.adb_manager.first_online_device()
-                selected_serial = device.serial
-            else:
-                states = {device.serial: device.state for device in self.adb_manager.devices()}
-                state = states.get(selected_serial)
-                if state != "device":
-                    raise RuntimeError(f"ADB 设备未在线：{selected_serial}（{state or '未知'}）")
-            self.adb_manager.forward(
-                self.defaults.adb_local_port,
-                self.defaults.gateway_port,
-                serial=selected_serial,
-            )
-        except RuntimeError as exc:
-            self._show_error("ADB 连接失败", str(exc))
-            return
+        selected_serial = self._selected_adb_serial()
+        self._run_adb_task(
+            "正在连接 ADB 并建立端口转发",
+            lambda: self._connect_adb_blocking(selected_serial),
+            self._on_adb_connected,
+            "ADB 连接失败",
+        )
 
+    def _on_adb_connected(self, selected_serial: str) -> None:
         self.adb_serial = selected_serial
         self.url_edit.setText(self.defaults.adb_video_url)
         self._set_status(f"ADB 已连接：{selected_serial}，端口转发到 {self.defaults.adb_video_url}")
@@ -440,16 +528,30 @@ class DashboardWindow(QMainWindow):
     def pull_logs_once(self) -> None:
         if self._current_mode() != self.MODE_ADB:
             return
-        if self.adb_serial is None:
-            self.connect_adb()
-            if self.adb_serial is None:
-                return
 
-        events_ok, metrics_ok = self.adb_manager.pull_logs(
-            self.remote_log_dir_edit.text().strip() or self.defaults.board_log_dir,
-            Path(self.local_events_edit.text()).parent,
-            serial=self.adb_serial,
+        selected_serial = self.adb_serial or self._selected_adb_serial()
+        remote_log_dir = self.remote_log_dir_edit.text().strip() or self.defaults.board_log_dir
+        local_log_dir = Path(self.local_events_edit.text()).parent
+
+        def task() -> tuple[str, bool, bool]:
+            serial = self._connect_adb_blocking(selected_serial)
+            events_ok, metrics_ok = self.adb_manager.pull_logs(
+                remote_log_dir,
+                local_log_dir,
+                serial=serial,
+            )
+            return serial, events_ok, metrics_ok
+
+        self._run_adb_task(
+            "正在拉取板端日志",
+            task,
+            self._on_logs_pulled,
+            "日志拉取失败",
         )
+
+    def _on_logs_pulled(self, result: tuple[str, bool, bool]) -> None:
+        serial, events_ok, metrics_ok = result
+        self.adb_serial = serial
         events_text = "成功" if events_ok else "失败"
         metrics_text = "成功" if metrics_ok else "失败"
         self._set_status(f"日志已拉取：事件={events_text} 性能={metrics_text}")
@@ -457,21 +559,35 @@ class DashboardWindow(QMainWindow):
     def start_all(self) -> None:
         self.stop_local_workers()
         mode = self._current_mode()
-        if mode == self.MODE_ADB and self.adb_serial is None:
-            self.connect_adb()
-            if self.adb_serial is None:
-                return
         if mode == self.MODE_ADB:
-            try:
-                self.adb_manager.start_board_runtime(
-                    self.board_runtime_dir_edit.text().strip() or self.defaults.board_runtime_dir,
-                    serial=self.adb_serial,
-                )
-            except RuntimeError as exc:
-                self._show_error("板端启动失败", str(exc))
-                return
-            self._set_status("板端运行包启动中")
+            selected_serial = self.adb_serial or self._selected_adb_serial()
+            runtime_dir = self.board_runtime_dir_edit.text().strip() or self.defaults.board_runtime_dir
 
+            def task() -> str:
+                serial = self._connect_adb_blocking(selected_serial)
+                self.adb_manager.start_board_runtime(
+                    runtime_dir,
+                    serial=serial,
+                )
+                return serial
+
+            self._run_adb_task(
+                "正在连接 ADB 并启动板端运行包",
+                task,
+                self._on_board_started,
+                "板端启动失败",
+            )
+            return
+
+        self._start_local_workers(mode)
+
+    def _on_board_started(self, serial: str) -> None:
+        self.adb_serial = serial
+        self.url_edit.setText(self.defaults.adb_video_url)
+        self._set_status("板端运行包启动中")
+        self._start_local_workers(self.MODE_ADB)
+
+    def _start_local_workers(self, mode: str) -> None:
         if mode != self.MODE_OFFLINE:
             self.video_worker = VideoWorker(self.url_edit.text().strip())
             self.video_worker.frame_ready.connect(self.video_panel.set_frame)

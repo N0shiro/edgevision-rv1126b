@@ -46,7 +46,8 @@ class LogWatcher(QThread):
 
     def stop(self) -> None:
         self._running = False
-        self.wait(1500)
+        if not self.wait(9000):
+            self.status_changed.emit("日志监听停止超时，等待当前 ADB 命令结束")
 
     def run(self) -> None:
         self._running = True

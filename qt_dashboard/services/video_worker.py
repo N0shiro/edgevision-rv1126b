@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 
 from PySide6.QtCore import QThread, Signal
@@ -17,7 +18,9 @@ class VideoWorker(QThread):
 
     def stop(self) -> None:
         self._running = False
-        self.wait(1500)
+        if not self.wait(1500):
+            self.terminate()
+            self.wait(1000)
 
     def run(self) -> None:
         try:
@@ -28,11 +31,22 @@ class VideoWorker(QThread):
 
         self._running = True
         self.status_changed.emit(f"正在打开视频流：{self.url}")
+        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "stimeout;3000000|rw_timeout;3000000")
         capture = None
         open_attempts = 0
         while self._running:
-            capture = cv2.VideoCapture(self.url)
-            if capture.isOpened():
+            capture = cv2.VideoCapture()
+            if hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+                capture.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)
+            if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+                capture.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
+
+            try:
+                opened = capture.open(self.url, cv2.CAP_FFMPEG)
+            except Exception:  # noqa: BLE001
+                opened = False
+
+            if opened and capture.isOpened():
                 break
             capture.release()
             open_attempts += 1
