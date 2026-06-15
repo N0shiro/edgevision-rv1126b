@@ -10,10 +10,9 @@ class VideoPanel(QWidget):
         super().__init__(parent)
         self._image: QImage | None = None
         self._aspect_ratio = 16 / 9
-        self._syncing_height = False
-        self.setMinimumSize(420, 260)
+        self.setMinimumSize(360, 220)
         self.setObjectName("videoPanel")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.label = QLabel("等待视频流")
         self.label.setObjectName("videoViewport")
@@ -63,19 +62,8 @@ class VideoPanel(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._sync_height_to_width()
         self._update_viewport_size()
         self._render()
-
-    def _sync_height_to_width(self) -> None:
-        if self._syncing_height:
-            return
-        desired_height = self.heightForWidth(self.width())
-        if abs(self.height() - desired_height) < 2:
-            return
-        self._syncing_height = True
-        self.setFixedHeight(desired_height)
-        self._syncing_height = False
 
     def _update_viewport_size(self) -> None:
         margins = self.layout().contentsMargins()

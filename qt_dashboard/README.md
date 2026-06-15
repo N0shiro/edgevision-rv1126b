@@ -32,7 +32,9 @@ cd <repo-root>\qt_dashboard\dist
 说明：
 
 - exe 是 PyInstaller 单文件包，首次启动可能较慢。
-- exe 约 106 MiB，主要体积来自 Qt、OpenCV、NumPy 和 Python 运行时。
+- exe 已内置 `adb.exe`、`AdbWinApi.dll` 和 `AdbWinUsbApi.dll`，新 PC 不需要单独安装 Android platform-tools。
+- 新 PC 仍需要 Windows 能识别 ADB USB 设备；如果设备管理器没有正确驱动，需要先安装对应的 Android/Rockchip ADB USB 驱动。
+- exe 体积主要来自 Qt、OpenCV、NumPy、Python 运行时和内置 ADB。
 - exe 通过 Git LFS 管理，克隆仓库后如文件不完整，请在仓库根目录执行 `git lfs pull`。
 
 ## 从源码运行
@@ -86,7 +88,13 @@ adb devices
 $env:AICAM_ADB="C:\path\to\adb.exe"
 ```
 
-GUI 的 ADB 管理逻辑会优先读取 `AICAM_ADB`，否则使用 `adb`。
+GUI 的 ADB 管理逻辑会按顺序查找：
+
+1. `AICAM_ADB` 指定路径。
+2. PyInstaller 单文件包内置的 `adb.exe`。
+3. GUI exe 同目录的 `adb.exe`。
+4. 系统 `PATH` 中的 `adb`。
+5. Android SDK 常见安装目录。
 
 ## ADB USB 操作流程
 

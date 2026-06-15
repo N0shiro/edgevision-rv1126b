@@ -8,7 +8,7 @@ from typing import Any, Callable, List, Optional
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -79,9 +79,10 @@ class DashboardWindow(QMainWindow):
         self.counts: Counter[str] = Counter()
 
         self.setWindowTitle("AICAM 上位机")
-        self.resize(1440, 900)
+        self.setMinimumSize(900, 560)
         self._build_ui()
         self._apply_style()
+        self._fit_to_available_geometry()
         self._update_control_state()
         QTimer.singleShot(0, lambda: self.refresh_adb_devices(show_status=False))
 
@@ -92,6 +93,11 @@ class DashboardWindow(QMainWindow):
             return
         self.stop_all()
         super().closeEvent(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            QTimer.singleShot(0, self._refresh_splitter_balance)
 
     def _build_ui(self) -> None:
         self.mode_combo = QComboBox()
@@ -149,17 +155,20 @@ class DashboardWindow(QMainWindow):
         right_tabs.addTab(self._build_task_panel(), "参数 / 日志")
         right_tabs.setMinimumWidth(320)
 
-        top_splitter = QSplitter(Qt.Orientation.Horizontal)
-        top_splitter.addWidget(self.video_panel)
-        top_splitter.addWidget(right_tabs)
-        top_splitter.setSizes([1080, 360])
-        top_splitter.setStretchFactor(0, 1)
+        self.top_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.top_splitter.addWidget(self.video_panel)
+        self.top_splitter.addWidget(right_tabs)
+        self.top_splitter.setChildrenCollapsible(False)
+        self.top_splitter.setSizes([1080, 360])
+        self.top_splitter.setStretchFactor(0, 1)
 
-        main_splitter = QSplitter(Qt.Orientation.Vertical)
-        main_splitter.addWidget(top_splitter)
-        main_splitter.addWidget(self.metrics_panel)
-        main_splitter.setSizes([640, 240])
-        main_splitter.setStretchFactor(0, 2)
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_splitter.addWidget(self.top_splitter)
+        self.main_splitter.addWidget(self.metrics_panel)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setSizes([620, 190])
+        self.main_splitter.setStretchFactor(0, 3)
+        self.main_splitter.setStretchFactor(1, 1)
 
         root = QWidget()
         root.setObjectName("rootPanel")
@@ -167,11 +176,35 @@ class DashboardWindow(QMainWindow):
         root_layout.setContentsMargins(14, 12, 14, 8)
         root_layout.setSpacing(10)
         root_layout.addWidget(top_bar)
-        root_layout.addWidget(main_splitter, 1)
+        root_layout.addWidget(self.main_splitter, 1)
 
         self.setCentralWidget(root)
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("就绪")
+
+    def _fit_to_available_geometry(self) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1280, 760)
+            return
+
+        available = screen.availableGeometry()
+        margin = 8
+        max_width = max(640, available.width() - margin * 2)
+        max_height = max(480, available.height() - margin * 2)
+        width = min(1440, max_width, max(900, int(available.width() * 0.92)))
+        height = min(860, max_height, max(560, int(available.height() * 0.90)))
+        x = available.x() + max(0, (available.width() - width) // 2)
+        y = available.y() + max(0, (available.height() - height) // 2)
+        self.setGeometry(x, y, width, height)
+        self._refresh_splitter_balance()
+
+    def _refresh_splitter_balance(self) -> None:
+        if not hasattr(self, "main_splitter"):
+            return
+        available_height = max(1, self.centralWidget().height())
+        metrics_height = min(230, max(155, int(available_height * 0.24)))
+        self.main_splitter.setSizes([max(1, available_height - metrics_height), metrics_height])
 
     def _build_top_bar(self) -> QWidget:
         panel = QWidget()

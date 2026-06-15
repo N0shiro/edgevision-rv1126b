@@ -178,6 +178,7 @@ edgevision-rv1126b/
   - `pyqtgraph`
   - `numpy`
 - 如果直接运行 `qt_dashboard/dist/AICAM-Dashboard.exe`，通常不需要额外安装 Python GUI 依赖。
+- 当前正式 exe 已内置 `adb.exe` 和 ADB 运行 DLL；新 PC 不需要单独安装 Android platform-tools，但仍需要 Windows USB 驱动能识别板端 ADB 设备。
 
 ## 克隆当前分支
 
@@ -342,7 +343,7 @@ cd <repo-root>\qt_dashboard\dist
 说明：
 
 - 这是 PyInstaller 单文件程序，首次启动需要解压运行环境，可能比源码启动慢。
-- 文件约 106 MiB，属于 Qt + OpenCV + NumPy + PyInstaller 单文件打包的正常体积。
+- 正式 exe 已内置 ADB 工具，属于 Qt + OpenCV + NumPy + Python + ADB 的单文件打包。
 - 该 exe 已通过 Git LFS 提交，克隆后要确保 `git lfs pull` 已执行。
 
 ### 方式二：从源码运行

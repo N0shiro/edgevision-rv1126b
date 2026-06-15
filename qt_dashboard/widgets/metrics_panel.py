@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Deque, Iterable
 
-from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from qt_dashboard.services.jsonl_reader import MetricsSample
 
@@ -14,6 +14,9 @@ class MetricsPanel(QWidget):
         import pyqtgraph as pg
 
         self.max_points = max_points
+        self.setMinimumHeight(150)
+        self.setMaximumHeight(260)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.index = 0
         self.x_values: Deque[int] = deque(maxlen=max_points)
         self.capture_values: Deque[float] = deque(maxlen=max_points)
@@ -45,6 +48,7 @@ class MetricsPanel(QWidget):
             grid.addWidget(label, idx // 4, idx % 4)
 
         self.plot = pg.PlotWidget()
+        self.plot.setMinimumHeight(105)
         self.plot.setBackground("#11151c")
         self.plot.showGrid(x=True, y=True, alpha=0.25)
         self.plot.addLegend(offset=(10, 10))

@@ -83,7 +83,7 @@ class LogWatcher(QThread):
             if metrics:
                 self.metrics_ready.emit(metrics)
 
-            self.msleep(self.poll_interval_ms)
+            self._sleep_interruptible(self.poll_interval_ms)
 
         self.status_changed.emit("日志监听已停止")
 
@@ -135,3 +135,10 @@ class LogWatcher(QThread):
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8", errors="replace") as handle:
             handle.write(text)
+
+    def _sleep_interruptible(self, duration_ms: int) -> None:
+        remaining_ms = max(0, duration_ms)
+        while self._running and remaining_ms > 0:
+            chunk_ms = min(100, remaining_ms)
+            self.msleep(chunk_ms)
+            remaining_ms -= chunk_ms

@@ -30,18 +30,33 @@ class AdbManager:
         if configured_path:
             return configured_path
 
+        meipass = getattr(sys, "_MEIPASS", None)
+        bundled_candidates = []
+        if meipass:
+            bundled_candidates.append(Path(meipass) / "adb.exe")
+        bundled_candidates.append(Path(sys.executable).resolve().parent / "adb.exe")
+        for candidate in bundled_candidates:
+            if candidate.is_file():
+                return str(candidate)
+
         path_adb = shutil.which("adb")
         if path_adb:
             return path_adb
 
-        candidates = [
-            Path(sys.executable).resolve().parent / "adb.exe",
-            Path(os.environ.get("ANDROID_HOME", "")) / "platform-tools" / "adb.exe",
-            Path(os.environ.get("ANDROID_SDK_ROOT", "")) / "platform-tools" / "adb.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk" / "platform-tools" / "adb.exe",
-            Path(os.environ.get("ProgramFiles", "")) / "Android" / "Sdk" / "platform-tools" / "adb.exe",
-            Path(os.environ.get("ProgramFiles(x86)", "")) / "Android" / "android-sdk" / "platform-tools" / "adb.exe",
-        ]
+        candidates = []
+        for env_name in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+            value = os.environ.get(env_name)
+            if value:
+                candidates.append(Path(value) / "platform-tools" / "adb.exe")
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            candidates.append(Path(local_app_data) / "Android" / "Sdk" / "platform-tools" / "adb.exe")
+        program_files = os.environ.get("ProgramFiles")
+        if program_files:
+            candidates.append(Path(program_files) / "Android" / "Sdk" / "platform-tools" / "adb.exe")
+        program_files_x86 = os.environ.get("ProgramFiles(x86)")
+        if program_files_x86:
+            candidates.append(Path(program_files_x86) / "Android" / "android-sdk" / "platform-tools" / "adb.exe")
         for candidate in candidates:
             if candidate.is_file():
                 return str(candidate)
@@ -76,8 +91,12 @@ class AdbManager:
                 )
         except FileNotFoundError:
             return 127, "", f"未找到 adb：{self.adb_path}"
+        except PermissionError:
+            return 126, "", f"无权限执行 adb：{self.adb_path}"
         except subprocess.TimeoutExpired:
             return 124, "", "adb 命令超时"
+        except OSError as exc:
+            return 125, "", f"adb 启动失败：{exc}"
 
         return completed.returncode, completed.stdout, completed.stderr
 
