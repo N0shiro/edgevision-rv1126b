@@ -572,7 +572,7 @@ class DashboardWindow(QMainWindow):
                 return serial
 
             self._run_adb_task(
-                "正在连接 ADB 并启动板端运行包",
+                "正在连接 ADB、同步板端时间并启动运行包",
                 task,
                 self._on_board_started,
                 "板端启动失败",

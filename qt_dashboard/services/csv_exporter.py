@@ -13,7 +13,8 @@ def export_detection_events(path: Path, events: Iterable[DetectionEvent]) -> Non
         writer = csv.writer(handle)
         writer.writerow(
             [
-                "timestamp",
+                "local_timestamp",
+                "board_timestamp",
                 "frame_sequence",
                 "label",
                 "class_id",
@@ -30,6 +31,7 @@ def export_detection_events(path: Path, events: Iterable[DetectionEvent]) -> Non
             writer.writerow(
                 [
                     event.timestamp,
+                    event.board_timestamp,
                     event.frame_sequence,
                     event.label,
                     event.class_id,

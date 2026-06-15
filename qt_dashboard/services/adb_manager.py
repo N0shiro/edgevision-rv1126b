@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
@@ -125,6 +126,8 @@ class AdbManager:
         if self.runtime_process is not None and self.runtime_process.poll() is None:
             return
 
+        self.sync_board_time(serial=serial)
+
         quoted_dir = shlex.quote(runtime_dir.rstrip("/") or "/userdata/aicam")
         command = (
             f"cd {quoted_dir} && "
@@ -152,6 +155,13 @@ class AdbManager:
         if self.runtime_process.poll() is not None:
             self.runtime_process = None
             raise RuntimeError("板端运行进程立即退出")
+
+    def sync_board_time(self, serial: Optional[str] = None) -> bool:
+        utc_now = datetime.now(timezone.utc)
+        date_value = utc_now.strftime("%m%d%H%M%Y.%S")
+        command = f"date -u {shlex.quote(date_value)} >/dev/null 2>&1"
+        code, _stdout, _stderr = self.shell(command, serial=serial, timeout=3.0)
+        return code == 0
 
     def stop_board_runtime(self, serial: Optional[str] = None) -> None:
         command = "killall camera camera_gateway 2>/dev/null || true"

@@ -12,9 +12,9 @@ class EventTable(QWidget):
     def __init__(self, max_rows: int = 500, parent=None) -> None:
         super().__init__(parent)
         self.max_rows = max_rows
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["时间", "帧号", "类别", "置信度", "推理 ms", "检测框", "后端"]
+            ["本机时间", "板端时间", "帧号", "类别", "置信度", "推理 ms", "检测框", "后端"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
@@ -43,6 +43,7 @@ class EventTable(QWidget):
         self.table.insertRow(row)
         values = [
             event.timestamp,
+            event.board_timestamp,
             str(event.frame_sequence),
             event.label,
             f"{event.score:.3f}",
@@ -52,6 +53,6 @@ class EventTable(QWidget):
         ]
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
-            if column in (1, 3, 4):
+            if column in (2, 4, 5):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(row, column, item)

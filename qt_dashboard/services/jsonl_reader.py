@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -9,6 +10,7 @@ from typing import Any, Dict, Iterable, List
 @dataclass
 class DetectionEvent:
     timestamp: str
+    board_timestamp: str
     frame_sequence: int
     label: str
     class_id: int
@@ -78,9 +80,15 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _local_timestamp() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def flatten_detection_events(items: Iterable[Dict[str, Any]]) -> List[DetectionEvent]:
     records: List[DetectionEvent] = []
     for item in items:
+        received_at = _local_timestamp()
+        board_timestamp = str(item.get("timestamp", ""))
         detections = item.get("detections") or []
         if not isinstance(detections, list):
             continue
@@ -90,7 +98,8 @@ def flatten_detection_events(items: Iterable[Dict[str, Any]]) -> List[DetectionE
                 continue
             records.append(
                 DetectionEvent(
-                    timestamp=str(item.get("timestamp", "")),
+                    timestamp=received_at,
+                    board_timestamp=board_timestamp,
                     frame_sequence=_to_int(item.get("frame_sequence"), 0),
                     label=str(detection.get("label", "")),
                     class_id=_to_int(detection.get("class_id"), -1),
