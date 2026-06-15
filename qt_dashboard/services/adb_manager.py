@@ -78,7 +78,7 @@ class AdbManager:
         except subprocess.TimeoutExpired:
             return 124, "", "adb 命令超时"
 
-        return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+        return completed.returncode, completed.stdout, completed.stderr
 
     def devices(self) -> List[AdbDevice]:
         code, stdout, stderr = self.run(["devices"], timeout=6.0)
@@ -165,6 +165,64 @@ class AdbManager:
         self.runtime_process = None
         if code != 0:
             raise RuntimeError(stderr or stdout or "停止板端运行进程失败")
+
+    def remote_file_size(self, remote_path: str, serial: Optional[str] = None, timeout: float = 2.5) -> int:
+        quoted_path = shlex.quote(remote_path)
+        command = (
+            f"if [ -f {quoted_path} ]; then "
+            f"wc -c < {quoted_path} 2>/dev/null | tr -d ' '; "
+            "else echo 0; fi"
+        )
+        code, stdout, stderr = self.shell(command, serial=serial, timeout=timeout)
+        if code != 0:
+            raise RuntimeError(stderr or stdout or f"读取远端文件大小失败：{remote_path}")
+        try:
+            return max(0, int(stdout.strip().splitlines()[-1]))
+        except (IndexError, ValueError) as exc:
+            raise RuntimeError(f"远端文件大小解析失败：{remote_path}") from exc
+
+    def tail_file(
+        self,
+        remote_path: str,
+        offset: int,
+        serial: Optional[str] = None,
+        timeout: float = 3.0,
+    ) -> Tuple[str, int]:
+        marker = "__AICAM_TAIL_OFFSET__="
+        safe_offset = max(0, int(offset))
+        quoted_path = shlex.quote(remote_path)
+        command = (
+            f"file={quoted_path}; offset={safe_offset}; "
+            "if [ ! -f \"$file\" ]; then "
+            f"printf '\\n{marker}0\\n'; exit 0; "
+            "fi; "
+            "size=$(wc -c < \"$file\" 2>/dev/null | tr -d ' '); "
+            "case \"$size\" in ''|*[!0-9]*) size=0;; esac; "
+            "if [ \"$size\" -lt \"$offset\" ]; then offset=0; fi; "
+            "if [ \"$size\" -gt \"$offset\" ]; then "
+            "start=$((offset + 1)); tail -c +\"$start\" \"$file\" 2>/dev/null; "
+            "fi; "
+            f"printf '\\n{marker}%s\\n' \"$size\""
+        )
+        code, stdout, stderr = self.shell(command, serial=serial, timeout=timeout)
+        if code != 0:
+            raise RuntimeError(stderr or stdout or f"读取远端日志失败：{remote_path}")
+
+        text = stdout.replace("\r\n", "\n")
+        marker_index = text.rfind("\n" + marker)
+        if marker_index < 0 and text.startswith(marker):
+            marker_index = 0
+        if marker_index < 0:
+            raise RuntimeError(f"远端日志响应缺少 offset 标记：{remote_path}")
+
+        payload = text[:marker_index]
+        marker_line = text[marker_index:].lstrip("\n").splitlines()[0]
+        try:
+            new_offset = max(0, int(marker_line[len(marker):].strip()))
+        except ValueError as exc:
+            raise RuntimeError(f"远端日志 offset 解析失败：{remote_path}") from exc
+
+        return payload, new_offset
 
     def pull_file(
         self,
